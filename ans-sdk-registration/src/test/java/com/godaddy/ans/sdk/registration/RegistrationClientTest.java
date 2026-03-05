@@ -149,7 +149,7 @@ class RegistrationClientTest {
             .version("1.0.0")
             .agentHost("test-agent.example.com")
             .addEndpointsItem(new AgentEndpoint()
-                .protocol(AgentEndpoint.ProtocolEnum.A2A)
+                .protocol(AgentEndpoint.ProtocolEnum.A2_A)
                 .agentUrl(URI.create("https://test-agent.example.com/a2a")))
             .identityCsrPEM("-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----")
             .serverCsrPEM("-----BEGIN CERTIFICATE REQUEST-----\ntest\n-----END CERTIFICATE REQUEST-----");
@@ -160,7 +160,8 @@ class RegistrationClientTest {
         assertThat(result.getAgentId()).isEqualTo(TEST_AGENT_ID);
         assertThat(result.getAnsName()).isEqualTo("ans://v1.0.0.test-agent.example.com");
         assertThat(result.getRegistrationPending()).isNotNull();
-        assertThat(result.getRegistrationPending().getStatus()).isEqualTo(RegistrationPending.StatusEnum.VALIDATION);
+        assertThat(result.getRegistrationPending().getStatus())
+                .isEqualTo(RegistrationPending.StatusEnum.PENDING_VALIDATION);
         assertThat(result.getRegistrationPending().getChallenges()).hasSize(1);
         assertThat(result.getRegistrationPending().getNextSteps()).hasSize(1);
 
@@ -191,7 +192,7 @@ class RegistrationClientTest {
             .version("invalid")
             .agentHost("test-agent.example.com")
             .addEndpointsItem(new AgentEndpoint()
-                .protocol(AgentEndpoint.ProtocolEnum.A2A)
+                .protocol(AgentEndpoint.ProtocolEnum.A2_A)
                 .agentUrl(URI.create("https://test-agent.example.com/a2a")))
             .identityCsrPEM("test-csr")
             .serverCsrPEM("test-csr");
@@ -496,7 +497,7 @@ class RegistrationClientTest {
             .version("1.0.0")
             .agentHost("test-agent.example.com")
             .addEndpointsItem(new AgentEndpoint()
-                .protocol(AgentEndpoint.ProtocolEnum.A2A)
+                .protocol(AgentEndpoint.ProtocolEnum.A2_A)
                 .agentUrl(URI.create("https://test-agent.example.com/a2a")))
             .identityCsrPEM("test-csr")
             .serverCsrPEM("test-csr");
