@@ -41,7 +41,7 @@ class AgentConnectionTest {
         httpApiEndpoint.setMetaDataUrl(URI.create("https://agent.example.com/metadata"));
 
         AgentEndpoint a2aEndpoint = new AgentEndpoint();
-        a2aEndpoint.setProtocol(AgentEndpoint.ProtocolEnum.A2A);
+        a2aEndpoint.setProtocol(AgentEndpoint.ProtocolEnum.A2_A);
         a2aEndpoint.setAgentUrl(URI.create("wss://agent.example.com/a2a"));
 
         agentDetails = new AgentDetails();

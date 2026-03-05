@@ -2,7 +2,7 @@ plugins {
     java
     `java-library`
     checkstyle
-    id("org.openapi.generator") version "7.2.0" apply false
+    id("org.openapi.generator") version "7.20.0" apply false
 }
 
 allprojects {
@@ -23,6 +23,11 @@ subprojects {
 
     repositories {
         mavenCentral()
+    }
+
+    dependencies {
+        // Required for Gradle 9.x JUnit Platform support
+        testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     }
 
     checkstyle {
