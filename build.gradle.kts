@@ -82,11 +82,6 @@ subprojects {
     if (name in publishableModules) {
         apply(plugin = "com.vanniktech.maven.publish")
 
-        java {
-            withSourcesJar()
-            withJavadocJar()
-        }
-
         configure<com.vanniktech.maven.publish.MavenPublishBaseExtension> {
             publishToMavenCentral(automaticRelease = true)
             signAllPublications()
