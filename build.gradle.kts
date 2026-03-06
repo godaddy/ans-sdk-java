@@ -143,8 +143,9 @@ subprojects {
                 gradle.taskGraph.hasTask("publishAllPublicationsToMavenCentralRepository")
             })
 
-            // Use GPG command (key imported by actions/setup-java)
-            useGpgCmd()
+            val signingKey = System.getenv("GPG_PRIVATE_KEY")
+            val signingPassword = System.getenv("GPG_PASSPHRASE")
+            useInMemoryPgpKeys(signingKey, signingPassword)
 
             sign(the<PublishingExtension>().publications["mavenJava"])
         }
