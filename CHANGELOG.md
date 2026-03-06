@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/godaddy/ans-sdk-java/compare/v0.1.1...v0.1.2) (2026-03-06)
+
+
+### Bug Fixes
+
+* kick off release ([#21](https://github.com/godaddy/ans-sdk-java/issues/21)) ([ec535f1](https://github.com/godaddy/ans-sdk-java/commit/ec535f1c657eea8f5589d1a1765b740d39dcd4f4))
+
 ## [0.1.1](https://github.com/godaddy/ans-sdk-java/compare/v0.1.0...v0.1.1) (2026-03-06)
 
 
