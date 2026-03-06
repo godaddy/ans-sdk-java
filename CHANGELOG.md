@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.5](https://github.com/godaddy/ans-sdk-java/compare/v0.1.4...v0.1.5) (2026-03-06)
+
+
+### Bug Fixes
+
+* ensure all jar tasks depend on code generation ([#27](https://github.com/godaddy/ans-sdk-java/issues/27)) ([9637b78](https://github.com/godaddy/ans-sdk-java/commit/9637b78c935770999833b89e0b4956b9d4cd31e0))
+
 ## [0.1.4](https://github.com/godaddy/ans-sdk-java/compare/v0.1.3...v0.1.4) (2026-03-06)
 
 
