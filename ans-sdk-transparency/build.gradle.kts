@@ -20,7 +20,7 @@ dependencies {
     implementation("org.slf4j:slf4j-api:$slf4jVersion")
 
     // dnsjava for _ra-badge TXT record lookups (JNDI doesn't support all TXT features)
-    implementation("dnsjava:dnsjava:3.6.0")
+    implementation("dnsjava:dnsjava:3.6.4")
 
     // Testing
     testImplementation("org.junit.jupiter:junit-jupiter:$junitVersion")

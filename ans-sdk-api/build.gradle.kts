@@ -17,7 +17,7 @@ dependencies {
     implementation("com.fasterxml.jackson.datatype:jackson-datatype-jsr310:$jacksonVersion")
 
     // Jakarta annotations
-    implementation("jakarta.annotation:jakarta.annotation-api:2.1.1")
+    implementation("jakarta.annotation:jakarta.annotation-api:3.0.0")
 }
 
 // Task to download the API spec from the authoritative source

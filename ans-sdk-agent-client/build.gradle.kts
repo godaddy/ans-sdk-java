@@ -26,7 +26,7 @@ dependencies {
     implementation("org.bouncycastle:bcprov-jdk18on:$bouncyCastleVersion")
 
     // dnsjava for DANE/TLSA DNS lookups (JNDI doesn't support TLSA)
-    implementation("dnsjava:dnsjava:3.6.0")
+    implementation("dnsjava:dnsjava:3.6.4")
 
     // Logging
     implementation("org.slf4j:slf4j-api:$slf4jVersion")
