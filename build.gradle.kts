@@ -3,6 +3,7 @@ plugins {
     `java-library`
     checkstyle
     id("org.openapi.generator") version "7.20.0" apply false
+    id("com.vanniktech.maven.publish") version "0.36.0" apply false
 }
 
 allprojects {
@@ -79,75 +80,43 @@ subprojects {
 
     // Apply publishing only to publishable modules
     if (name in publishableModules) {
-        apply(plugin = "maven-publish")
-        apply(plugin = "signing")
+        apply(plugin = "com.vanniktech.maven.publish")
 
         java {
             withSourcesJar()
             withJavadocJar()
         }
 
-        configure<PublishingExtension> {
-            publications {
-                create<MavenPublication>("mavenJava") {
-                    from(components["java"])
+        configure<com.vanniktech.maven.publish.MavenPublishBaseExtension> {
+            publishToMavenCentral(automaticRelease = true)
+            signAllPublications()
 
-                    pom {
-                        name.set(project.name)
-                        description.set("ANS SDK - ${project.name}")
-                        url.set("https://github.com/godaddy/ans-sdk-java")
+            pom {
+                name.set(project.name)
+                description.set("ANS SDK - ${project.name}")
+                url.set("https://github.com/godaddy/ans-sdk-java")
 
-                        licenses {
-                            license {
-                                name.set("MIT License")
-                                url.set("https://opensource.org/licenses/MIT")
-                            }
-                        }
-
-                        developers {
-                            developer {
-                                id.set("godaddy")
-                                name.set("GoDaddy")
-                                email.set("oswg@godaddy.com")
-                            }
-                        }
-
-                        scm {
-                            connection.set("scm:git:git://github.com/godaddy/ans-sdk-java.git")
-                            developerConnection.set("scm:git:ssh://github.com/godaddy/ans-sdk-java.git")
-                            url.set("https://github.com/godaddy/ans-sdk-java")
-                        }
+                licenses {
+                    license {
+                        name.set("MIT License")
+                        url.set("https://opensource.org/licenses/MIT")
                     }
                 }
-            }
 
-            repositories {
-                // Maven Central via Sonatype Central Portal
-                maven {
-                    name = "mavenCentral"
-                    url = uri("https://central.sonatype.com/api/v1/publisher/upload")
-
-                    credentials {
-                        username = System.getenv("MAVEN_CENTRAL_USERNAME")
-                            ?: project.findProperty("mavenCentralUsername") as String? ?: ""
-                        password = System.getenv("MAVEN_CENTRAL_PASSWORD")
-                            ?: project.findProperty("mavenCentralPassword") as String? ?: ""
+                developers {
+                    developer {
+                        id.set("godaddy")
+                        name.set("GoDaddy")
+                        email.set("oswg@godaddy.com")
                     }
                 }
+
+                scm {
+                    connection.set("scm:git:git://github.com/godaddy/ans-sdk-java.git")
+                    developerConnection.set("scm:git:ssh://github.com/godaddy/ans-sdk-java.git")
+                    url.set("https://github.com/godaddy/ans-sdk-java")
+                }
             }
-        }
-
-        configure<SigningExtension> {
-            // Only sign when publishing to Maven Central (skip for local testing)
-            setRequired({
-                gradle.taskGraph.hasTask("publishAllPublicationsToMavenCentralRepository")
-            })
-
-            val signingKey = System.getenv("GPG_PRIVATE_KEY")
-            val signingPassword = System.getenv("GPG_PASSPHRASE")
-            useInMemoryPgpKeys(signingKey, signingPassword)
-
-            sign(the<PublishingExtension>().publications["mavenJava"])
         }
     }
 }
