@@ -18,7 +18,7 @@ import java.util.Objects;
  * Client for connecting to ANS-registered agents with configurable verification.
  *
  * <p>This is the main entry point for agent-to-agent communication. Use
- * {@link com.godaddy.ans.sdk.discovery.DiscoveryClient} separately for agent
+ * {@code DiscoveryClient} from the discovery module separately for agent
  * resolution if needed.</p>
  *
  * <h2>Quick Start - Request/Response</h2>

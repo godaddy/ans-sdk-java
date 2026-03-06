@@ -17,6 +17,7 @@ package com.godaddy.ans.sdk.agent.verification;
  *
  * <h2>Resolver Options</h2>
  * <table>
+ *   <caption>Available DNS resolver configurations</caption>
  *   <tr><th>Config</th><th>Primary IP</th><th>Provider</th></tr>
  *   <tr><td>CLOUDFLARE</td><td>1.1.1.1</td><td>Cloudflare DNS</td></tr>
  *   <tr><td>GOOGLE</td><td>8.8.8.8</td><td>Google Public DNS</td></tr>
