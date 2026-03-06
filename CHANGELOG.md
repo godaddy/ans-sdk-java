@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.4](https://github.com/godaddy/ans-sdk-java/compare/v0.1.3...v0.1.4) (2026-03-06)
+
+
+### Bug Fixes
+
+* update Maven publishing configuration and GitHub Actions workflow ([#25](https://github.com/godaddy/ans-sdk-java/issues/25)) ([5e9a70a](https://github.com/godaddy/ans-sdk-java/commit/5e9a70af7e5380ba32acd46d4e752eb351057cf4))
+
 ## [0.1.3](https://github.com/godaddy/ans-sdk-java/compare/v0.1.2...v0.1.3) (2026-03-06)
 
 
