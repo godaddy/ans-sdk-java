@@ -73,3 +73,12 @@ tasks.compileJava {
 tasks.named("checkstyleMain") {
     enabled = false
 }
+
+// Ensure source/javadoc jars wait for code generation
+tasks.named("sourcesJar") {
+    dependsOn(tasks.openApiGenerate)
+}
+
+tasks.named("javadocJar") {
+    dependsOn(tasks.openApiGenerate)
+}
