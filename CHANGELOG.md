@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/godaddy/ans-sdk-java/compare/v0.1.2...v0.1.3) (2026-03-06)
+
+
+### Bug Fixes
+
+* update comments in settings.gradle.kts for clarity ([#23](https://github.com/godaddy/ans-sdk-java/issues/23)) ([c05d55e](https://github.com/godaddy/ans-sdk-java/commit/c05d55e9be8db7fef68b0f381e59ae46371560db))
+
 ## [0.1.2](https://github.com/godaddy/ans-sdk-java/compare/v0.1.1...v0.1.2) (2026-03-06)
 
 
