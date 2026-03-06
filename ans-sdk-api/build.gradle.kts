@@ -74,11 +74,7 @@ tasks.named("checkstyleMain") {
     enabled = false
 }
 
-// Ensure source/javadoc jars wait for code generation
-tasks.named("sourcesJar") {
-    dependsOn(tasks.openApiGenerate)
-}
-
-tasks.named("javadocJar") {
+// Ensure all jar tasks (including sources/javadoc jars created by the publish plugin) wait for code generation.
+tasks.withType<Jar>().configureEach {
     dependsOn(tasks.openApiGenerate)
 }
