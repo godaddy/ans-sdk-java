@@ -231,6 +231,152 @@ class ScittVerifierAdapterTest {
             ScittPreVerifyResult result = future.get(5, TimeUnit.SECONDS);
             assertThat(result.expectation().status()).isEqualTo(ScittExpectation.Status.PARSE_ERROR);
         }
+
+        @Test
+        @DisplayName("Should return parseError on verification exception")
+        void shouldReturnParseErrorOnVerificationException() throws Exception {
+            ScittReceipt receipt = mock(ScittReceipt.class);
+            StatusToken token = mock(StatusToken.class);
+            ScittHeaderProvider.ScittArtifacts artifacts =
+                new ScittHeaderProvider.ScittArtifacts(receipt, token, new byte[10], new byte[10]);
+
+            when(mockHeaderProvider.extractArtifacts(any())).thenReturn(Optional.of(artifacts));
+            when(mockTransparencyClient.getRootKeysAsync())
+                .thenReturn(CompletableFuture.completedFuture(toRootKeys(testKeyPair.getPublic())));
+            when(mockScittVerifier.verify(any(), any(), any()))
+                .thenThrow(new RuntimeException("Verification error"));
+
+            CompletableFuture<ScittPreVerifyResult> future = adapter.preVerify(Map.of());
+
+            ScittPreVerifyResult result = future.get(5, TimeUnit.SECONDS);
+            assertThat(result.expectation().status()).isEqualTo(ScittExpectation.Status.PARSE_ERROR);
+        }
+
+        @Test
+        @DisplayName("Should handle async exception via exceptionally")
+        void shouldHandleAsyncException() throws Exception {
+            ScittReceipt receipt = mock(ScittReceipt.class);
+            StatusToken token = mock(StatusToken.class);
+            ScittHeaderProvider.ScittArtifacts artifacts =
+                new ScittHeaderProvider.ScittArtifacts(receipt, token, new byte[10], new byte[10]);
+
+            when(mockHeaderProvider.extractArtifacts(any())).thenReturn(Optional.of(artifacts));
+            when(mockTransparencyClient.getRootKeysAsync())
+                .thenReturn(CompletableFuture.failedFuture(new RuntimeException("Async failure")));
+
+            CompletableFuture<ScittPreVerifyResult> future = adapter.preVerify(Map.of());
+
+            ScittPreVerifyResult result = future.get(5, TimeUnit.SECONDS);
+            assertThat(result.expectation().status()).isEqualTo(ScittExpectation.Status.PARSE_ERROR);
+            assertThat(result.expectation().failureReason()).contains("Async failure");
+        }
+
+        @Test
+        @DisplayName("Should handle key not found with REJECT decision")
+        void shouldHandleKeyNotFoundWithReject() throws Exception {
+            ScittReceipt receipt = mock(ScittReceipt.class);
+            StatusToken token = mock(StatusToken.class);
+            when(token.issuedAt()).thenReturn(java.time.Instant.now().minusSeconds(3600));
+            ScittHeaderProvider.ScittArtifacts artifacts =
+                new ScittHeaderProvider.ScittArtifacts(receipt, token, new byte[10], new byte[10]);
+
+            when(mockHeaderProvider.extractArtifacts(any())).thenReturn(Optional.of(artifacts));
+            when(mockTransparencyClient.getRootKeysAsync())
+                .thenReturn(CompletableFuture.completedFuture(toRootKeys(testKeyPair.getPublic())));
+
+            ScittExpectation keyNotFound = ScittExpectation.keyNotFound("unknown-key-id");
+            when(mockScittVerifier.verify(any(), any(), any())).thenReturn(keyNotFound);
+
+            com.godaddy.ans.sdk.transparency.scitt.RefreshDecision rejectDecision =
+                com.godaddy.ans.sdk.transparency.scitt.RefreshDecision.reject("Too old");
+            when(mockTransparencyClient.refreshRootKeysIfNeeded(any())).thenReturn(rejectDecision);
+
+            CompletableFuture<ScittPreVerifyResult> future = adapter.preVerify(Map.of());
+
+            ScittPreVerifyResult result = future.get(5, TimeUnit.SECONDS);
+            assertThat(result.expectation().status()).isEqualTo(ScittExpectation.Status.KEY_NOT_FOUND);
+        }
+
+        @Test
+        @DisplayName("Should handle key not found with DEFER decision")
+        void shouldHandleKeyNotFoundWithDefer() throws Exception {
+            ScittReceipt receipt = mock(ScittReceipt.class);
+            StatusToken token = mock(StatusToken.class);
+            when(token.issuedAt()).thenReturn(java.time.Instant.now());
+            ScittHeaderProvider.ScittArtifacts artifacts =
+                new ScittHeaderProvider.ScittArtifacts(receipt, token, new byte[10], new byte[10]);
+
+            when(mockHeaderProvider.extractArtifacts(any())).thenReturn(Optional.of(artifacts));
+            when(mockTransparencyClient.getRootKeysAsync())
+                .thenReturn(CompletableFuture.completedFuture(toRootKeys(testKeyPair.getPublic())));
+
+            ScittExpectation keyNotFound = ScittExpectation.keyNotFound("unknown-key-id");
+            when(mockScittVerifier.verify(any(), any(), any())).thenReturn(keyNotFound);
+
+            com.godaddy.ans.sdk.transparency.scitt.RefreshDecision deferDecision =
+                com.godaddy.ans.sdk.transparency.scitt.RefreshDecision.defer("Cooldown active");
+            when(mockTransparencyClient.refreshRootKeysIfNeeded(any())).thenReturn(deferDecision);
+
+            CompletableFuture<ScittPreVerifyResult> future = adapter.preVerify(Map.of());
+
+            ScittPreVerifyResult result = future.get(5, TimeUnit.SECONDS);
+            assertThat(result.expectation().status()).isEqualTo(ScittExpectation.Status.PARSE_ERROR);
+        }
+
+        @Test
+        @DisplayName("Should handle key not found with REFRESHED decision")
+        void shouldHandleKeyNotFoundWithRefreshed() throws Exception {
+            ScittReceipt receipt = mock(ScittReceipt.class);
+            StatusToken token = mock(StatusToken.class);
+            when(token.issuedAt()).thenReturn(java.time.Instant.now());
+            ScittHeaderProvider.ScittArtifacts artifacts =
+                new ScittHeaderProvider.ScittArtifacts(receipt, token, new byte[10], new byte[10]);
+
+            when(mockHeaderProvider.extractArtifacts(any())).thenReturn(Optional.of(artifacts));
+            when(mockTransparencyClient.getRootKeysAsync())
+                .thenReturn(CompletableFuture.completedFuture(toRootKeys(testKeyPair.getPublic())));
+
+            ScittExpectation keyNotFound = ScittExpectation.keyNotFound("unknown-key-id");
+            ScittExpectation verified = ScittExpectation.verified(
+                List.of("abc123"), List.of(), "host", "ans.test", Map.of(), null);
+            when(mockScittVerifier.verify(any(), any(), any()))
+                .thenReturn(keyNotFound)
+                .thenReturn(verified);
+
+            Map<String, PublicKey> freshKeys = toRootKeys(testKeyPair.getPublic());
+            com.godaddy.ans.sdk.transparency.scitt.RefreshDecision refreshedDecision =
+                com.godaddy.ans.sdk.transparency.scitt.RefreshDecision.refreshed(freshKeys);
+            when(mockTransparencyClient.refreshRootKeysIfNeeded(any())).thenReturn(refreshedDecision);
+
+            CompletableFuture<ScittPreVerifyResult> future = adapter.preVerify(Map.of());
+
+            ScittPreVerifyResult result = future.get(5, TimeUnit.SECONDS);
+            assertThat(result.expectation().isVerified()).isTrue();
+        }
+
+        @Test
+        @DisplayName("Should handle key not found with null issued-at")
+        void shouldHandleKeyNotFoundWithNullIssuedAt() throws Exception {
+            ScittReceipt receipt = mock(ScittReceipt.class);
+            StatusToken token = mock(StatusToken.class);
+            when(token.issuedAt()).thenReturn(null);
+            when(receipt.protectedHeader()).thenReturn(null);
+            ScittHeaderProvider.ScittArtifacts artifacts =
+                new ScittHeaderProvider.ScittArtifacts(receipt, token, new byte[10], new byte[10]);
+
+            when(mockHeaderProvider.extractArtifacts(any())).thenReturn(Optional.of(artifacts));
+            when(mockTransparencyClient.getRootKeysAsync())
+                .thenReturn(CompletableFuture.completedFuture(toRootKeys(testKeyPair.getPublic())));
+
+            ScittExpectation keyNotFound = ScittExpectation.keyNotFound("unknown-key-id");
+            when(mockScittVerifier.verify(any(), any(), any())).thenReturn(keyNotFound);
+
+            CompletableFuture<ScittPreVerifyResult> future = adapter.preVerify(Map.of());
+
+            ScittPreVerifyResult result = future.get(5, TimeUnit.SECONDS);
+            // Should return original key not found since we can't determine artifact time
+            assertThat(result.expectation().status()).isEqualTo(ScittExpectation.Status.KEY_NOT_FOUND);
+        }
     }
 
     @Nested
@@ -336,6 +482,40 @@ class ScittVerifierAdapterTest {
 
             assertThat(result.status()).isEqualTo(VerificationResult.Status.MISMATCH);
             assertThat(result.type()).isEqualTo(VerificationResult.VerificationType.SCITT);
+        }
+
+        @Test
+        @DisplayName("Should return MISMATCH with unknown expected when fingerprints empty")
+        void shouldReturnMismatchWithUnknownWhenFingerprintsEmpty() {
+            X509Certificate cert = mock(X509Certificate.class);
+            ScittExpectation expectation = ScittExpectation.verified(
+                List.of(), List.of(), "host", "ans.test", Map.of(), null);
+            ScittPreVerifyResult preResult = ScittPreVerifyResult.verified(
+                expectation, mock(ScittReceipt.class), mock(StatusToken.class));
+
+            ScittVerifier.ScittVerificationResult verifyResult =
+                ScittVerifier.ScittVerificationResult.mismatch("actual456", "No valid fingerprints");
+            when(mockScittVerifier.postVerify(any(), any(), any())).thenReturn(verifyResult);
+
+            VerificationResult result = adapter.postVerify("test.example.com", cert, preResult);
+
+            assertThat(result.status()).isEqualTo(VerificationResult.Status.MISMATCH);
+            assertThat(result.expectedFingerprint()).isEqualTo("unknown");
+        }
+
+        @Test
+        @DisplayName("Should return ERROR with default message when failureReason is null")
+        void shouldReturnErrorWithDefaultMessageWhenFailureReasonNull() {
+            X509Certificate cert = mock(X509Certificate.class);
+            // Create expectation with null failureReason
+            ScittExpectation failedExpectation = ScittExpectation.keyNotFound(null);
+            ScittPreVerifyResult preResult = ScittPreVerifyResult.verified(
+                failedExpectation, mock(ScittReceipt.class), mock(StatusToken.class));
+
+            VerificationResult result = adapter.postVerify("test.example.com", cert, preResult);
+
+            assertThat(result.status()).isEqualTo(VerificationResult.Status.ERROR);
+            assertThat(result.reason()).contains("SCITT verification failed");
         }
     }
 
