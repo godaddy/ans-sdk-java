@@ -4,6 +4,8 @@ val junitVersion: String by project
 val mockitoVersion: String by project
 val assertjVersion: String by project
 val wiremockVersion: String by project
+val bouncyCastleVersion: String by project
+val caffeineVersion: String by project
 
 dependencies {
     // Core module for exceptions and HTTP utilities
@@ -11,6 +13,9 @@ dependencies {
 
     // Crypto module for certificate utilities (fingerprint, SAN extraction)
     api(project(":ans-sdk-crypto"))
+
+    // BouncyCastle for hex encoding utilities
+    implementation("org.bouncycastle:bcprov-jdk18on:$bouncyCastleVersion")
 
     // Jackson for JSON serialization
     implementation("com.fasterxml.jackson.core:jackson-databind:$jacksonVersion")
@@ -21,6 +26,12 @@ dependencies {
 
     // dnsjava for _ra-badge TXT record lookups (JNDI doesn't support all TXT features)
     implementation("dnsjava:dnsjava:3.6.4")
+
+    // CBOR parsing for SCITT COSE_Sign1 structures
+    implementation("com.upokecenter:cbor:4.5.4")
+
+    // Caffeine for high-performance caching with TTL and automatic eviction
+    implementation("com.github.ben-manes.caffeine:caffeine:$caffeineVersion")
 
     // Testing
     testImplementation("org.junit.jupiter:junit-jupiter:$junitVersion")
