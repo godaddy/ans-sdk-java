@@ -2,7 +2,7 @@ plugins {
     java
     `java-library`
     checkstyle
-    id("org.openapi.generator") version "7.20.0" apply false
+    id("org.openapi.generator") version "7.21.0" apply false
     id("com.vanniktech.maven.publish") version "0.36.0" apply false
 }
 
