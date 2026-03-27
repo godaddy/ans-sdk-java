@@ -1,5 +1,7 @@
 package com.godaddy.ans.examples.a2a;
 
+import com.godaddy.ans.sdk.agent.AnsConnection;
+import com.godaddy.ans.sdk.agent.AnsVerifiedClient;
 import com.godaddy.ans.sdk.agent.VerificationPolicy;
 import com.godaddy.ans.sdk.agent.http.AnsVerifiedSslContextFactory;
 import com.godaddy.ans.sdk.agent.http.CertificateCapturingTrustManager;
@@ -39,10 +41,16 @@ import java.util.function.BiConsumer;
 /**
  * A2A Client Example - demonstrates ANS verification with the A2A SDK.
  *
- * <p>This example shows how to integrate ANS verification (DANE, Badge)
+ * <p>This example shows how to integrate ANS verification (DANE, Badge, SCITT)
  * with the official A2A (Agent-to-Agent) Java SDK.</p>
  *
- * <h2>Integration Pattern</h2>
+ * <h2>Examples</h2>
+ * <ul>
+ *   <li><b>Example 1: Manual Verification</b> - Low-level DANE/Badge verification flow</li>
+ *   <li><b>Example 2: SCITT with AnsVerifiedClient</b> - High-level SCITT verification</li>
+ * </ul>
+ *
+ * <h2>Integration Pattern (Manual)</h2>
  * <ol>
  *   <li>Create {@link HttpClientA2AAdapter} with SSLContext from {@link AnsVerifiedSslContextFactory}</li>
  *   <li>Pre-verify (DANE lookup) before connection</li>
@@ -51,20 +59,33 @@ import java.util.function.BiConsumer;
  *   <li>Create A2A client and send messages</li>
  * </ol>
  *
+ * <h2>Integration Pattern (SCITT with AnsVerifiedClient)</h2>
+ * <ol>
+ *   <li>Create {@link AnsVerifiedClient} with keystore and policy</li>
+ *   <li>Call connect() - handles preflight and SCITT header exchange</li>
+ *   <li>Use SSLContext and SCITT headers with A2A client</li>
+ *   <li>Call verifyServer() after TLS handshake</li>
+ * </ol>
+ *
  * <h2>Prerequisites</h2>
  * <ol>
  *   <li>A running A2A server with HTTPS endpoint</li>
  *   <li>For DANE verification: TLSA DNS records configured</li>
  *   <li>For Badge verification: Agent registered in ANS transparency log</li>
+ *   <li>For SCITT verification: Agent with receipt and status token</li>
  * </ol>
  *
  * <h2>Usage</h2>
  * <pre>
- * # Run with default settings
+ * # Run with default settings (DANE/Badge example)
  * ./gradlew :ans-sdk-agent-client:examples:a2a-client:run
  *
  * # Run with custom server URL
- * ./gradlew :ans-sdk-agent-client:examples:a2a-client:run --args="https://your-a2a-server.example.com:8443"
+ * ./gradlew :ans-sdk-agent-client:examples:a2a-client:run --args="https://your-server:8443"
+ *
+ * # Run SCITT example with keystore
+ * ./gradlew :ans-sdk-agent-client:examples:a2a-client:run \
+ *   --args="https://your-server:8443 /path/to/client.p12 password agentId"
  * </pre>
  */
 public class A2aClientExample {
@@ -80,9 +101,25 @@ public class A2aClientExample {
         System.out.println();
 
         try {
+            // Example 1: Manual DANE/Badge verification
             a2aWithAnsVerification(serverUrl);
+
+            // Example 2: SCITT verification (requires keystore arguments)
+            if (args.length >= 4) {
+                String keystorePath = args[1];
+                String keystorePassword = args[2];
+                String agentId = args[3];
+                a2aWithScittVerification(serverUrl, keystorePath, keystorePassword, agentId);
+            } else {
+                System.out.println("\n===========================================");
+                System.out.println("SCITT Example (Skipped)");
+                System.out.println("===========================================");
+                System.out.println("To run SCITT example, provide:");
+                System.out.println("  --args=\"<serverUrl> <keystorePath> <keystorePassword> <agentId>\"");
+            }
+
             System.out.println("\n===========================================");
-            System.out.println("Example completed successfully!");
+            System.out.println("Examples completed!");
             System.out.println("===========================================");
         } catch (Exception e) {
             System.err.println("Example failed: " + e.getMessage());
@@ -237,6 +274,145 @@ public class A2aClientExample {
         } finally {
             // Clean up
             CertificateCapturingTrustManager.clearCapturedCertificates(hostname);
+        }
+    }
+
+    /**
+     * Demonstrates A2A SDK integration with SCITT verification using AnsVerifiedClient.
+     *
+     * <p>This is the recommended approach for SCITT-enabled A2A communication.
+     * AnsVerifiedClient handles:</p>
+     * <ul>
+     *   <li>Preflight requests to exchange SCITT headers</li>
+     *   <li>SSLContext creation with certificate capture</li>
+     *   <li>SCITT artifact verification</li>
+     * </ul>
+     *
+     * @param serverUrl the A2A server URL
+     * @param keystorePath path to PKCS12 keystore for client mTLS
+     * @param keystorePassword keystore password
+     * @param agentId agent ID for SCITT header generation
+     */
+    private static void a2aWithScittVerification(String serverUrl, String keystorePath,
+                                                  String keystorePassword, String agentId) throws Exception {
+        System.out.println("\n===========================================");
+        System.out.println("Example 2: A2A with SCITT Verification");
+        System.out.println("===========================================");
+
+        URI serverUri = URI.create(serverUrl);
+        String hostname = serverUri.getHost();
+
+        // ============================================================
+        // STEP 1: Create AnsVerifiedClient with SCITT policy
+        // ============================================================
+        System.out.println("\nStep 1: Creating AnsVerifiedClient");
+        System.out.println("-".repeat(40));
+
+        try (AnsVerifiedClient ansClient = AnsVerifiedClient.builder()
+                .agentId(agentId)
+                .keyStorePath(keystorePath, keystorePassword)
+                .policy(VerificationPolicy.SCITT_REQUIRED)
+                .build()) {
+
+            System.out.println("  Policy: " + ansClient.policy());
+            // Fetch SCITT headers (blocking is fine during setup, not on I/O threads)
+            var scittHeaders = ansClient.scittHeadersAsync().join();
+            if (!scittHeaders.isEmpty()) {
+                System.out.println("  SCITT headers configured for outgoing requests");
+            }
+
+            // ============================================================
+            // STEP 2: Connect (performs preflight for SCITT)
+            // ============================================================
+            System.out.println("\nStep 2: Connecting with SCITT preflight");
+            System.out.println("-".repeat(40));
+
+            try (AnsConnection connection = ansClient.connect(serverUrl)) {
+                System.out.println("  Connected to: " + connection.hostname());
+                System.out.println("  SCITT artifacts from server: " + connection.hasScittArtifacts());
+
+                // ============================================================
+                // STEP 3: Create A2A HTTP client with ANS SSLContext
+                // ============================================================
+                System.out.println("\nStep 3: Creating A2A client");
+                System.out.println("-".repeat(40));
+
+                HttpClientA2AAdapter httpClient = new HttpClientA2AAdapter(ansClient.sslContext());
+                System.out.println("  Created HttpClientA2AAdapter with ANS SSLContext");
+
+                // ============================================================
+                // STEP 4: Fetch AgentCard (triggers TLS handshake)
+                // ============================================================
+                System.out.println("\nStep 4: Fetching AgentCard");
+                System.out.println("-".repeat(40));
+
+                A2ACardResolver cardResolver = new A2ACardResolver(httpClient, serverUrl, null);
+                AgentCard agentCard = cardResolver.getAgentCard();
+
+                System.out.println("  AgentCard fetched:");
+                System.out.println("    Name: " + agentCard.name());
+                System.out.println("    Description: " + agentCard.description());
+
+                // ============================================================
+                // STEP 5: Post-verify server certificate
+                // ============================================================
+                System.out.println("\nStep 5: Post-verification (SCITT + captured cert)");
+                System.out.println("-".repeat(40));
+
+                VerificationResult result = connection.verifyServer();
+
+                System.out.println("  Verification: " + result.status() + " (" + result.type() + ")");
+                System.out.println("  Reason: " + result.reason());
+
+                if (!result.isSuccess()) {
+                    throw new SecurityException("SCITT verification failed: " + result.reason());
+                }
+
+                // ============================================================
+                // STEP 6: Create A2A client and send message
+                // ============================================================
+                System.out.println("\nStep 6: Sending A2A message");
+                System.out.println("-".repeat(40));
+
+                CompletableFuture<String> responseFuture = new CompletableFuture<>();
+
+                BiConsumer<ClientEvent, AgentCard> eventHandler = (event, card) -> {
+                    System.out.println("  Received event: " + event.getClass().getSimpleName());
+                    if (event instanceof MessageEvent messageEvent) {
+                        Message msg = messageEvent.getMessage();
+                        if (msg.parts() != null) {
+                            for (Part<?> part : msg.parts()) {
+                                if (part instanceof TextPart textPart) {
+                                    responseFuture.complete(textPart.text());
+                                }
+                            }
+                        }
+                    } else if (event instanceof TaskEvent taskEvent) {
+                        System.out.println("    Task status: " + taskEvent.getTask().status());
+                    }
+                };
+
+                JSONRPCTransportConfig transportConfig = new JSONRPCTransportConfig(httpClient);
+
+                Client client = Client.builder(agentCard)
+                    .withTransport(JSONRPCTransport.class, transportConfig)
+                    .addConsumer(eventHandler)
+                    .build();
+
+                try {
+                    Message message = A2A.toUserMessage("Hello from SCITT-verified A2A client!");
+                    System.out.println("  Sending message: \"Hello from SCITT-verified A2A client!\"");
+
+                    client.sendMessage(message);
+
+                    String response = responseFuture.get(30, TimeUnit.SECONDS);
+                    System.out.println("  Response: " + response);
+                    System.out.println("\n  Successfully communicated with SCITT-verified A2A server!");
+
+                } finally {
+                    CertificateCapturingTrustManager.clearCapturedCertificates(hostname);
+                }
+            }
         }
     }
 }

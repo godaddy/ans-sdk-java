@@ -345,7 +345,7 @@ AgentConnection conn = client.connect("https://target-agent.example.com",
 // Full verification - DANE + Badge
 AgentConnection conn = client.connect("https://target-agent.example.com",
     ConnectOptions.builder()
-        .verificationPolicy(VerificationPolicy.FULL)
+        .verificationPolicy(VerificationPolicy.DANE_AND_BADGE)
         .build());
 
 // With mTLS client certificate
@@ -507,7 +507,7 @@ ConnectOptions.builder()
 
 // Full verification (DANE + Badge)
 ConnectOptions.builder()
-    .verificationPolicy(VerificationPolicy.FULL)
+    .verificationPolicy(VerificationPolicy.DANE_AND_BADGE)
     .build();
 ```
 

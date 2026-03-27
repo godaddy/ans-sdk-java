@@ -1,0 +1,69 @@
+# Spring Boot MCP Server with ANS Verification
+# ===========================================================
+# This configuration enables:
+# - HTTPS with optional mTLS (client certificate)
+# - SCITT artifact injection on all responses
+# - SCITT-based client verification
+# - Health monitoring via Actuator
+
+server:
+  port: 8443
+  ssl:
+    enabled: true
+    enabled-protocols: TLSv1.2
+    # Path to the keystore containing the server certificate and private key
+    key-store: ${SSL_KEYSTORE_PATH}
+    key-store-password: ${SSL_KEYSTORE_PASSWORD}
+    key-store-type: ${SSL_KEYSTORE_TYPE:PKCS12}
+    # Client certificate authentication mode:
+    #   none - no client cert required (default for development)
+    #   want - request client cert but don't require it
+    #   need - require client cert (production with mTLS)
+    client-auth: ${SSL_CLIENT_AUTH:need}
+    # For mTLS, uncomment and configure truststore:
+    trust-store: ${SSL_TRUSTSTORE_PATH}
+    trust-store-password: ${SSL_TRUSTSTORE_PASSWORD}
+    trust-store-type: ${SSL_TRUSTSTORE_TYPE:PKCS12}
+
+# ANS MCP Server Configuration
+ans:
+  mcp:
+    # Agent UUID for SCITT artifact fetching (required)
+    agent-id: ${ANS_AGENT_ID:e3cf3df4-092e-497d-80f3-55ad0e38588a}
+
+    # Server identification for MCP protocol
+    server-info:
+      name: ans-mcp-server
+      version: 1.0.0
+
+    # Client verification settings
+    verification:
+      # Enable/disable client verification
+      enabled: ${ANS_VERIFICATION_ENABLED:true}
+      # Verification policy (SCITT_REQUIRED recommended for production)
+      # Options: PKI_ONLY, BADGE_REQUIRED, DANE_ADVISORY, DANE_REQUIRED,
+      #          DANE_AND_BADGE, SCITT_ENHANCED, SCITT_REQUIRED
+      policy: ${ANS_VERIFICATION_POLICY:SCITT_REQUIRED}
+
+    # SCITT configuration
+    scitt:
+      # Transparency Log domain (use OTE for testing, production for live)
+      domain: ${ANS_SCITT_DOMAIN:transparency.ans.ote-godaddy.com}
+
+# Spring Actuator (health monitoring)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+      show-components: always
+
+# Logging
+logging:
+  level:
+    com.godaddy.ans: INFO
+    com.godaddy.ans.sdk.transparency: DEBUG
+    com.godaddy.ans.examples.mcp.spring: DEBUG
