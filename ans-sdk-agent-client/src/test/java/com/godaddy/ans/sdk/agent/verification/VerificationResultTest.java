@@ -145,9 +145,10 @@ class VerificationResultTest {
 
     @Test
     void verificationTypeEnumValues() {
-        assertEquals(3, VerificationType.values().length);
+        assertEquals(4, VerificationType.values().length);
         assertEquals(VerificationType.DANE, VerificationType.valueOf("DANE"));
         assertEquals(VerificationType.BADGE, VerificationType.valueOf("BADGE"));
+        assertEquals(VerificationType.SCITT, VerificationType.valueOf("SCITT"));
         assertEquals(VerificationType.PKI_ONLY, VerificationType.valueOf("PKI_ONLY"));
     }
 

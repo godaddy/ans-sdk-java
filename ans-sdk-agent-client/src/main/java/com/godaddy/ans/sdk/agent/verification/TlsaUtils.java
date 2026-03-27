@@ -1,10 +1,9 @@
 package com.godaddy.ans.sdk.agent.verification;
 
+import com.godaddy.ans.sdk.crypto.CryptoCache;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.security.cert.CertificateEncodingException;
 import java.security.cert.X509Certificate;
 
@@ -75,11 +74,10 @@ public final class TlsaUtils {
      * @param selector the TLSA selector (0 = full cert, 1 = SPKI)
      * @param matchingType the TLSA matching type (0 = exact, 1 = SHA-256, 2 = SHA-512)
      * @return the computed certificate data, or null if selector/matchingType is unknown
-     * @throws NoSuchAlgorithmException if the hash algorithm is not available
      * @throws CertificateEncodingException if the certificate cannot be encoded
      */
     public static byte[] computeCertificateData(X509Certificate cert, int selector, int matchingType)
-            throws NoSuchAlgorithmException, CertificateEncodingException {
+            throws CertificateEncodingException {
 
         // Extract data based on selector
         byte[] data;
@@ -95,8 +93,8 @@ public final class TlsaUtils {
         // Apply matching type (hash or exact)
         return switch (matchingType) {
             case MATCH_EXACT -> data;
-            case MATCH_SHA256 -> MessageDigest.getInstance("SHA-256").digest(data);
-            case MATCH_SHA512 -> MessageDigest.getInstance("SHA-512").digest(data);
+            case MATCH_SHA256 -> CryptoCache.sha256(data);
+            case MATCH_SHA512 -> CryptoCache.sha512(data);
             default -> {
                 LOGGER.warn("Unknown TLSA matching type: {}", matchingType);
                 yield null;

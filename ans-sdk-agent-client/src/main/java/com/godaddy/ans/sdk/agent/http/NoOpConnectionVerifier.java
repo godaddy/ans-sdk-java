@@ -4,9 +4,11 @@ import com.godaddy.ans.sdk.agent.VerificationPolicy;
 import com.godaddy.ans.sdk.agent.verification.ConnectionVerifier;
 import com.godaddy.ans.sdk.agent.verification.PreVerificationResult;
 import com.godaddy.ans.sdk.agent.verification.VerificationResult;
+import com.godaddy.ans.sdk.transparency.scitt.ScittPreVerifyResult;
 
 import java.security.cert.X509Certificate;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -47,5 +49,10 @@ public final class NoOpConnectionVerifier implements ConnectionVerifier {
     @Override
     public VerificationResult combine(List<VerificationResult> results, VerificationPolicy policy) {
         return VerificationResult.skipped("No additional verification performed (PKI only)");
+    }
+
+    @Override
+    public CompletableFuture<ScittPreVerifyResult> scittPreVerify(Map<String, String> responseHeaders) {
+        return CompletableFuture.completedFuture(ScittPreVerifyResult.notPresent());
     }
 }

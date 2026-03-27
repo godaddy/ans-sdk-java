@@ -50,13 +50,6 @@ class VerificationPolicyTest {
     }
 
     @Test
-    void fullHasAllRequired() {
-        assertTrue(VerificationPolicy.FULL.hasAnyVerification());
-        assertEquals(VerificationMode.REQUIRED, VerificationPolicy.FULL.daneMode());
-        assertEquals(VerificationMode.REQUIRED, VerificationPolicy.FULL.badgeMode());
-    }
-
-    @Test
     void customBuilderDefaultsToDisabled() {
         VerificationPolicy policy = VerificationPolicy.custom().build();
 
@@ -100,18 +93,6 @@ class VerificationPolicyTest {
     }
 
     @Test
-    void constructorRejectsNullDaneMode() {
-        assertThrows(NullPointerException.class, () ->
-            new VerificationPolicy(null, VerificationMode.DISABLED));
-    }
-
-    @Test
-    void constructorRejectsNullBadgeMode() {
-        assertThrows(NullPointerException.class, () ->
-            new VerificationPolicy(VerificationMode.DISABLED, null));
-    }
-
-    @Test
     void builderRejectsNullDaneMode() {
         assertThrows(NullPointerException.class, () ->
             VerificationPolicy.custom().dane(null));
@@ -142,15 +123,6 @@ class VerificationPolicyTest {
     }
 
     @Test
-    void recordAccessors() {
-        VerificationPolicy policy = new VerificationPolicy(
-            VerificationMode.ADVISORY, VerificationMode.REQUIRED);
-
-        assertEquals(VerificationMode.ADVISORY, policy.daneMode());
-        assertEquals(VerificationMode.REQUIRED, policy.badgeMode());
-    }
-
-    @Test
     void hasAnyVerificationWithAdvisoryMode() {
         VerificationPolicy policy = VerificationPolicy.custom()
             .dane(VerificationMode.ADVISORY)
@@ -166,6 +138,5 @@ class VerificationPolicyTest {
         assertNotNull(VerificationPolicy.DANE_ADVISORY);
         assertNotNull(VerificationPolicy.DANE_REQUIRED);
         assertNotNull(VerificationPolicy.DANE_AND_BADGE);
-        assertNotNull(VerificationPolicy.FULL);
     }
 }

@@ -353,7 +353,7 @@ class DefaultAgentHttpClientFactoryTest {
     }
 
     @Test
-    void createVerifiedWithMtlsAndFullVerification() throws Exception {
+    void createVerifiedWithMtlsAndDaneAndBadgeVerification() throws Exception {
         // Tests mTLS combined with both DANE and Badge verification
         DefaultAgentHttpClientFactory factory = new DefaultAgentHttpClientFactory();
 
@@ -361,7 +361,7 @@ class DefaultAgentHttpClientFactoryTest {
         X509Certificate cert = createTestCertificate("CN=TestClient", keyPair);
 
         ConnectOptions options = ConnectOptions.builder()
-            .verificationPolicy(VerificationPolicy.FULL)
+            .verificationPolicy(VerificationPolicy.DANE_AND_BADGE)
             .clientCertificate(cert, keyPair.getPrivate())
             .build();
 

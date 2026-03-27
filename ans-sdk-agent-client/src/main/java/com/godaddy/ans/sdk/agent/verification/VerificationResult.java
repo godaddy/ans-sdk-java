@@ -43,6 +43,8 @@ public record VerificationResult(
         DANE,
         /** ANS transparency log badge verification (proof of registration) */
         BADGE,
+        /** SCITT verification via HTTP headers (receipt + status token) */
+        SCITT,
         /** PKI-only verification (no additional ANS verification performed) */
         PKI_ONLY
     }

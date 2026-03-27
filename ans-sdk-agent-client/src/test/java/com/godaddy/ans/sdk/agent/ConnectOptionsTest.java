@@ -133,17 +133,6 @@ class ConnectOptionsTest {
     }
 
     @Test
-    void fullPolicyShouldEnableAllVerifications() {
-        ConnectOptions options = ConnectOptions.builder()
-            .verificationPolicy(VerificationPolicy.FULL)
-            .build();
-
-        VerificationPolicy policy = options.getVerificationPolicy();
-        assertEquals(VerificationMode.REQUIRED, policy.daneMode());
-        assertEquals(VerificationMode.REQUIRED, policy.badgeMode());
-    }
-
-    @Test
     void customPolicyWithAdvisoryModes() {
         VerificationPolicy custom = VerificationPolicy.custom()
             .dane(VerificationMode.ADVISORY)
