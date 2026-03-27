@@ -11,9 +11,13 @@ import com.godaddy.ans.sdk.transparency.model.CheckpointHistoryParams;
 import com.godaddy.ans.sdk.transparency.model.CheckpointHistoryResponse;
 import com.godaddy.ans.sdk.transparency.model.TransparencyLogAudit;
 import com.godaddy.ans.sdk.transparency.model.TransparencyLogV1;
+import com.godaddy.ans.sdk.transparency.scitt.TrustedDomainRegistry;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.security.PublicKey;
 import java.time.Duration;
 import java.util.Map;
 
@@ -29,6 +33,18 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class TransparencyClientTest {
 
     private static final String TEST_AGENT_ID = "6bf2b7a9-1383-4e33-a945-845f34af7526";
+
+    @BeforeAll
+    static void setUpClass() {
+        // Include localhost for WireMock tests along with production domains
+        System.setProperty(TrustedDomainRegistry.TRUSTED_DOMAINS_PROPERTY,
+            "transparency.ans.godaddy.com,transparency.ans.ote-godaddy.com,localhost");
+    }
+
+    @AfterAll
+    static void tearDownClass() {
+        System.clearProperty(TrustedDomainRegistry.TRUSTED_DOMAINS_PROPERTY);
+    }
 
     @Test
     @DisplayName("Should retrieve agent transparency log with V1 schema")
@@ -543,6 +559,257 @@ class TransparencyClientTest {
         assertThat(result.getSchemaVersion()).isEqualTo("V0");
     }
 
+    @Test
+    @DisplayName("Should retrieve root key from C2SP format")
+    void shouldRetrieveRootKeyFromC2spFormat(WireMockRuntimeInfo wmRuntimeInfo) {
+        String baseUrl = wmRuntimeInfo.getHttpBaseUrl();
+
+        stubFor(get(urlEqualTo("/root-keys"))
+            .willReturn(aResponse()
+                .withStatus(200)
+                .withHeader("Content-Type", "text/plain")
+                .withBody(rootKeyC2spSingleResponse())));
+
+        TransparencyClient client = TransparencyClient.builder()
+            .baseUrl(baseUrl)
+            .build();
+
+        Map<String, PublicKey> keys = client.getRootKeysAsync().join();
+
+        assertThat(keys).isNotEmpty();
+        assertThat(keys.values().iterator().next().getAlgorithm()).isEqualTo("EC");
+    }
+
+    @Test
+    @DisplayName("Should retrieve multiple root keys from C2SP format")
+    void shouldRetrieveMultipleRootKeysFromC2spFormat(WireMockRuntimeInfo wmRuntimeInfo) {
+        String baseUrl = wmRuntimeInfo.getHttpBaseUrl();
+
+        stubFor(get(urlEqualTo("/root-keys"))
+            .willReturn(aResponse()
+                .withStatus(200)
+                .withHeader("Content-Type", "text/plain")
+                .withBody(rootKeyC2spMultipleResponse())));
+
+        TransparencyClient client = TransparencyClient.builder()
+            .baseUrl(baseUrl)
+            .build();
+
+        Map<String, PublicKey> keys = client.getRootKeysAsync().join();
+
+        assertThat(keys).hasSize(2);
+        keys.values().forEach(k -> assertThat(k.getAlgorithm()).isEqualTo("EC"));
+    }
+
+    @Test
+    @DisplayName("Should retrieve root key asynchronously")
+    void shouldRetrieveRootKeyAsync(WireMockRuntimeInfo wmRuntimeInfo) throws Exception {
+        String baseUrl = wmRuntimeInfo.getHttpBaseUrl();
+
+        stubFor(get(urlEqualTo("/root-keys"))
+            .willReturn(aResponse()
+                .withStatus(200)
+                .withHeader("Content-Type", "text/plain")
+                .withBody(rootKeyC2spSingleResponse())));
+
+        TransparencyClient client = TransparencyClient.builder()
+            .baseUrl(baseUrl)
+            .build();
+
+        Map<String, PublicKey> keys = client.getRootKeysAsync().get();
+
+        assertThat(keys).isNotEmpty();
+        assertThat(keys.values().iterator().next().getAlgorithm()).isEqualTo("EC");
+    }
+
+    @Test
+    @DisplayName("Should throw AnsServerException for root key 500 error")
+    void shouldThrowServerExceptionForRootKeyError(WireMockRuntimeInfo wmRuntimeInfo) {
+        String baseUrl = wmRuntimeInfo.getHttpBaseUrl();
+
+        stubFor(get(urlEqualTo("/root-keys"))
+            .willReturn(aResponse()
+                .withStatus(500)
+                .withHeader("X-Request-Id", "req-123")
+                .withBody("Internal error")));
+
+        TransparencyClient client = TransparencyClient.builder()
+            .baseUrl(baseUrl)
+            .build();
+
+        assertThatThrownBy(() -> client.getRootKeysAsync().join())
+            .hasCauseInstanceOf(com.godaddy.ans.sdk.exception.AnsServerException.class);
+    }
+
+    @Test
+    @DisplayName("Should throw exception for invalid root key format")
+    void shouldThrowExceptionForInvalidRootKeyFormat(WireMockRuntimeInfo wmRuntimeInfo) {
+        String baseUrl = wmRuntimeInfo.getHttpBaseUrl();
+
+        stubFor(get(urlEqualTo("/root-keys"))
+            .willReturn(aResponse()
+                .withStatus(200)
+                .withHeader("Content-Type", "text/plain")
+                .withBody("not a valid C2SP format line")));
+
+        TransparencyClient client = TransparencyClient.builder()
+            .baseUrl(baseUrl)
+            .build();
+
+        assertThatThrownBy(() -> client.getRootKeysAsync().join())
+            .hasCauseInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("Should retrieve receipt bytes")
+    void shouldRetrieveReceiptBytes(WireMockRuntimeInfo wmRuntimeInfo) {
+        String baseUrl = wmRuntimeInfo.getHttpBaseUrl();
+        byte[] expectedBytes = {0x01, 0x02, 0x03};
+
+        stubFor(get(urlEqualTo("/v1/agents/" + TEST_AGENT_ID + "/receipt"))
+            .willReturn(aResponse()
+                .withStatus(200)
+                .withBody(expectedBytes)));
+
+        TransparencyClient client = TransparencyClient.builder()
+            .baseUrl(baseUrl)
+            .build();
+
+        byte[] result = client.getReceipt(TEST_AGENT_ID);
+        assertThat(result).isEqualTo(expectedBytes);
+    }
+
+    @Test
+    @DisplayName("Should retrieve status token bytes")
+    void shouldRetrieveStatusTokenBytes(WireMockRuntimeInfo wmRuntimeInfo) {
+        String baseUrl = wmRuntimeInfo.getHttpBaseUrl();
+        byte[] expectedBytes = {0x04, 0x05, 0x06};
+
+        stubFor(get(urlEqualTo("/v1/agents/" + TEST_AGENT_ID + "/status-token"))
+            .willReturn(aResponse()
+                .withStatus(200)
+                .withBody(expectedBytes)));
+
+        TransparencyClient client = TransparencyClient.builder()
+            .baseUrl(baseUrl)
+            .build();
+
+        byte[] result = client.getStatusToken(TEST_AGENT_ID);
+        assertThat(result).isEqualTo(expectedBytes);
+    }
+
+    @Test
+    @DisplayName("Should retrieve receipt asynchronously")
+    void shouldRetrieveReceiptAsync(WireMockRuntimeInfo wmRuntimeInfo) throws Exception {
+        String baseUrl = wmRuntimeInfo.getHttpBaseUrl();
+        byte[] expectedBytes = {0x07, 0x08};
+
+        stubFor(get(urlEqualTo("/v1/agents/" + TEST_AGENT_ID + "/receipt"))
+            .willReturn(aResponse()
+                .withStatus(200)
+                .withBody(expectedBytes)));
+
+        TransparencyClient client = TransparencyClient.builder()
+            .baseUrl(baseUrl)
+            .build();
+
+        byte[] result = client.getReceiptAsync(TEST_AGENT_ID).get();
+        assertThat(result).isEqualTo(expectedBytes);
+    }
+
+    @Test
+    @DisplayName("Should retrieve status token asynchronously")
+    void shouldRetrieveStatusTokenAsync(WireMockRuntimeInfo wmRuntimeInfo) throws Exception {
+        String baseUrl = wmRuntimeInfo.getHttpBaseUrl();
+        byte[] expectedBytes = {0x09, 0x0A};
+
+        stubFor(get(urlEqualTo("/v1/agents/" + TEST_AGENT_ID + "/status-token"))
+            .willReturn(aResponse()
+                .withStatus(200)
+                .withBody(expectedBytes)));
+
+        TransparencyClient client = TransparencyClient.builder()
+            .baseUrl(baseUrl)
+            .build();
+
+        byte[] result = client.getStatusTokenAsync(TEST_AGENT_ID).get();
+        assertThat(result).isEqualTo(expectedBytes);
+    }
+
+    @Test
+    @DisplayName("Should build client with custom root key cache TTL")
+    void shouldBuildClientWithCustomRootKeyCacheTtl(WireMockRuntimeInfo wmRuntimeInfo) {
+        String baseUrl = wmRuntimeInfo.getHttpBaseUrl();
+
+        TransparencyClient client = TransparencyClient.builder()
+            .baseUrl(baseUrl)
+            .rootKeyCacheTtl(Duration.ofMinutes(30))
+            .build();
+
+        assertThat(client).isNotNull();
+        assertThat(client.getBaseUrl()).isEqualTo(baseUrl);
+    }
+
+    @Test
+    @DisplayName("Should invalidate root key cache")
+    void shouldInvalidateRootKeyCache(WireMockRuntimeInfo wmRuntimeInfo) {
+        String baseUrl = wmRuntimeInfo.getHttpBaseUrl();
+
+        stubFor(get(urlEqualTo("/root-keys"))
+            .willReturn(aResponse()
+                .withStatus(200)
+                .withHeader("Content-Type", "text/plain")
+                .withBody(rootKeyC2spSingleResponse())));
+
+        TransparencyClient client = TransparencyClient.builder()
+            .baseUrl(baseUrl)
+            .build();
+
+        // First call fetches keys
+        Map<String, PublicKey> keys1 = client.getRootKeysAsync().join();
+        assertThat(keys1).isNotEmpty();
+
+        // Invalidate cache - should not throw
+        client.invalidateRootKeyCache();
+
+        // Second call should fetch again (cache was invalidated)
+        Map<String, PublicKey> keys2 = client.getRootKeysAsync().join();
+        assertThat(keys2).isNotEmpty();
+    }
+
+    @Test
+    @DisplayName("Should use default root key cache TTL of 24 hours")
+    void shouldUseDefaultRootKeyCacheTtl() {
+        assertThat(TransparencyClient.DEFAULT_ROOT_KEY_CACHE_TTL).isEqualTo(Duration.ofHours(24));
+    }
+
+    @Test
+    @DisplayName("Should reject untrusted transparency log domain")
+    void shouldRejectUntrustedDomain() {
+        // malicious domain is not in our configured trusted domains
+        assertThatThrownBy(() -> TransparencyClient.builder()
+            .baseUrl("https://malicious-transparency-log.example.com")
+            .build())
+            .isInstanceOf(SecurityException.class)
+            .hasMessageContaining("Untrusted transparency log domain")
+            .hasMessageContaining("malicious-transparency-log.example.com");
+    }
+
+    @Test
+    @DisplayName("Should accept trusted production domain")
+    void shouldAcceptTrustedProductionDomain() {
+        // These are in our configured trusted domains
+        TransparencyClient prodClient = TransparencyClient.builder()
+            .baseUrl("https://transparency.ans.godaddy.com")
+            .build();
+        assertThat(prodClient.getBaseUrl()).isEqualTo("https://transparency.ans.godaddy.com");
+
+        TransparencyClient oteClient = TransparencyClient.builder()
+            .baseUrl("https://transparency.ans.ote-godaddy.com")
+            .build();
+        assertThat(oteClient.getBaseUrl()).isEqualTo("https://transparency.ans.ote-godaddy.com");
+    }
+
     // ==================== Test Data ====================
 
     private String v1TransparencyLogResponse() {
@@ -717,5 +984,30 @@ class TransparencyClientTest {
               }
             }
             """;
+    }
+
+    // Valid EC P-256 public key for testing (SPKI-DER, base64 encoded)
+    private static final String TEST_EC_PUBLIC_KEY =
+        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEveuRZW0vWcVjh4enr9tA7VAKPFmL"
+        + "OZs1S99lGDqRhAQBEdetB290Det8rO1ojnHEA8PX4Yojb0oomwA2krO5Ag==";
+
+    // Second test key (different point on P-256 curve)
+    private static final String TEST_EC_PUBLIC_KEY_2 =
+        "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEb3cL8bLB0m5Dz7NiJj3xz0oPp4at"
+        + "Hj8bTqJf4d3nVkPR5eK8jFrLhCPQgKcZvWpJhH9q0vwPiT3v5RCKnGdDgA==";
+
+    /**
+     * Returns a valid EC P-256 public key in C2SP note format.
+     */
+    private String rootKeyC2spSingleResponse() {
+        return "transparency.ans.godaddy.com+abcd1234+" + TEST_EC_PUBLIC_KEY;
+    }
+
+    /**
+     * Returns multiple valid EC P-256 public keys in C2SP note format.
+     */
+    private String rootKeyC2spMultipleResponse() {
+        return "transparency.ans.godaddy.com+abcd1234+" + TEST_EC_PUBLIC_KEY + "\n"
+            + "transparency.ans.godaddy.com+efgh5678+" + TEST_EC_PUBLIC_KEY_2;
     }
 }

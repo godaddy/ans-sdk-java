@@ -7,8 +7,13 @@ import com.godaddy.ans.sdk.transparency.model.CheckpointHistoryResponse;
 import com.godaddy.ans.sdk.transparency.model.CheckpointResponse;
 import com.godaddy.ans.sdk.transparency.model.TransparencyLog;
 import com.godaddy.ans.sdk.transparency.model.TransparencyLogAudit;
+import com.godaddy.ans.sdk.transparency.scitt.RefreshDecision;
+import com.godaddy.ans.sdk.transparency.scitt.TrustedDomainRegistry;
 
+import java.net.URI;
+import java.security.PublicKey;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
@@ -46,15 +51,23 @@ public final class TransparencyClient {
      */
     public static final String DEFAULT_BASE_URL = "https://transparency.ans.ote-godaddy.com";
 
+    /**
+     * Default cache TTL for the root public key (24 hours).
+     *
+     * <p>Root keys rarely change, so a long TTL is appropriate.</p>
+     */
+    public static final Duration DEFAULT_ROOT_KEY_CACHE_TTL = Duration.ofHours(24);
+
     private static final Duration DEFAULT_CONNECT_TIMEOUT = Duration.ofSeconds(10);
     private static final Duration DEFAULT_READ_TIMEOUT = Duration.ofSeconds(30);
 
     private final String baseUrl;
     private final TransparencyService service;
 
-    private TransparencyClient(String baseUrl, Duration connectTimeout, Duration readTimeout) {
+    private TransparencyClient(String baseUrl, Duration connectTimeout, Duration readTimeout,
+                               Duration rootKeyCacheTtl) {
         this.baseUrl = baseUrl;
-        this.service = new TransparencyService(baseUrl, connectTimeout, readTimeout);
+        this.service = new TransparencyService(baseUrl, connectTimeout, readTimeout, rootKeyCacheTtl);
     }
 
     /**
@@ -161,6 +174,81 @@ public final class TransparencyClient {
         return service.getLogSchema(version);
     }
 
+    // ==================== SCITT Operations (Sync) ====================
+
+    /**
+     * Retrieves the SCITT receipt for an agent.
+     *
+     * <p>The receipt is a COSE_Sign1 structure containing a Merkle inclusion
+     * proof that the agent's registration was recorded in the transparency log.</p>
+     *
+     * @param agentId the agent's unique identifier
+     * @return the raw receipt bytes (COSE_Sign1)
+     * @throws com.godaddy.ans.sdk.exception.AnsNotFoundException if the agent is not found
+     */
+    public byte[] getReceipt(String agentId) {
+        return service.getReceipt(agentId);
+    }
+
+    /**
+     * Retrieves the status token for an agent.
+     *
+     * <p>The status token is a COSE_Sign1 structure containing a time-bounded
+     * assertion of the agent's current status and valid certificate fingerprints.</p>
+     *
+     * @param agentId the agent's unique identifier
+     * @return the raw status token bytes (COSE_Sign1)
+     * @throws com.godaddy.ans.sdk.exception.AnsNotFoundException if the agent is not found
+     */
+    public byte[] getStatusToken(String agentId) {
+        return service.getStatusToken(agentId);
+    }
+
+    /**
+     * Invalidates the cached root public keys.
+     *
+     * <p>Call this method to force the next {@link #getRootKeysAsync()} call to
+     * fetch fresh keys from the server. This is useful when you know the
+     * root keys have been rotated.</p>
+     */
+    public void invalidateRootKeyCache() {
+        service.invalidateRootKeyCache();
+    }
+
+    /**
+     * Returns the timestamp when the root key cache was last populated.
+     *
+     * <p>This can be used to determine if an artifact was issued after the cache
+     * was refreshed, which may indicate the artifact was signed with a new key
+     * that we don't have yet.</p>
+     *
+     * @return the cache population timestamp, or {@link Instant#EPOCH} if never populated
+     */
+    public Instant getCachePopulatedAt() {
+        return service.getCachePopulatedAt();
+    }
+
+    /**
+     * Attempts to refresh the root key cache if the artifact's issued-at timestamp
+     * indicates it may have been signed with a new key not yet in our cache.
+     *
+     * <p>This method performs security checks to prevent cache thrashing attacks:</p>
+     * <ul>
+     *   <li>Rejects artifacts claiming to be from the future (beyond 60s clock skew)</li>
+     *   <li>Rejects artifacts older than our cache (key should already be present)</li>
+     *   <li>Enforces a 30-second global cooldown between refresh attempts</li>
+     * </ul>
+     *
+     * <p>Use this method when a key lookup fails during SCITT verification to
+     * potentially recover from a key rotation scenario.</p>
+     *
+     * @param artifactIssuedAt the issued-at timestamp from the SCITT artifact
+     * @return the refresh decision indicating whether to retry verification
+     */
+    public RefreshDecision refreshRootKeysIfNeeded(Instant artifactIssuedAt) {
+        return service.refreshRootKeysIfNeeded(artifactIssuedAt);
+    }
+
     // ==================== Async Operations ====================
 
     /**
@@ -206,6 +294,50 @@ public final class TransparencyClient {
         return CompletableFuture.supplyAsync(() -> getCheckpointHistory(params), AnsExecutors.sharedIoExecutor());
     }
 
+    /**
+     * Retrieves the SCITT receipt for an agent asynchronously.
+     *
+     * <p>This method uses non-blocking I/O and does not occupy a thread pool
+     * thread during the HTTP request. Use this instead of the sync variant
+     * for high-concurrency scenarios.</p>
+     *
+     * @param agentId the agent's unique identifier
+     * @return a CompletableFuture with the raw receipt bytes
+     */
+    public CompletableFuture<byte[]> getReceiptAsync(String agentId) {
+        return service.getReceiptAsync(agentId);
+    }
+
+    /**
+     * Retrieves the status token for an agent asynchronously.
+     *
+     * <p>This method uses non-blocking I/O and does not occupy a thread pool
+     * thread during the HTTP request. Use this instead of the sync variant
+     * for high-concurrency scenarios.</p>
+     *
+     * @param agentId the agent's unique identifier
+     * @return a CompletableFuture with the raw status token bytes
+     */
+    public CompletableFuture<byte[]> getStatusTokenAsync(String agentId) {
+        return service.getStatusTokenAsync(agentId);
+    }
+
+    /**
+     * Retrieves the SCITT root public keys asynchronously.
+     *
+     * <p>This method uses non-blocking I/O and does not occupy a thread pool
+     * thread during the HTTP request. The keys are cached with a configurable
+     * TTL (default: 24 hours) to avoid redundant network calls.</p>
+     *
+     * <p>The returned map is keyed by hex key ID (4-byte SHA-256 of SPKI-DER),
+     * enabling O(1) lookup by key ID from COSE headers.</p>
+     *
+     * @return a CompletableFuture with the root public keys (keyed by hex key ID)
+     */
+    public CompletableFuture<Map<String, PublicKey>> getRootKeysAsync() {
+        return service.getRootKeysAsync();
+    }
+
     // ==================== Accessors ====================
 
     /**
@@ -225,6 +357,7 @@ public final class TransparencyClient {
         private String baseUrl = DEFAULT_BASE_URL;
         private Duration connectTimeout = DEFAULT_CONNECT_TIMEOUT;
         private Duration readTimeout = DEFAULT_READ_TIMEOUT;
+        private Duration rootKeyCacheTtl = DEFAULT_ROOT_KEY_CACHE_TTL;
 
         private Builder() {
         }
@@ -232,7 +365,12 @@ public final class TransparencyClient {
         /**
          * Sets the base URL for the transparency log API.
          *
-         * @param baseUrl the base URL (default: https://transparency.ans.godaddy.com)
+         * <p><b>Security note:</b> Only URLs pointing to trusted SCITT domains
+         * (defined in {@link TrustedDomainRegistry}) are accepted. This prevents
+         * root key substitution attacks where a malicious transparency log could
+         * provide a forged root key.</p>
+         *
+         * @param baseUrl the base URL (default: https://transparency.ans.ote-godaddy.com)
          * @return this builder
          */
         public Builder baseUrl(String baseUrl) {
@@ -263,12 +401,37 @@ public final class TransparencyClient {
         }
 
         /**
+         * Sets the cache TTL for the root public key.
+         *
+         * <p>The root key is cached to avoid redundant network calls during
+         * verification. Since root keys rarely change, a long TTL is appropriate.</p>
+         *
+         * @param ttl the cache TTL (default: 24 hours)
+         * @return this builder
+         */
+        public Builder rootKeyCacheTtl(Duration ttl) {
+            this.rootKeyCacheTtl = ttl;
+            return this;
+        }
+
+        /**
          * Builds the TransparencyClient.
          *
          * @return a new TransparencyClient instance
+         * @throws SecurityException if the configured baseUrl is not a trusted SCITT domain
          */
         public TransparencyClient build() {
-            return new TransparencyClient(baseUrl, connectTimeout, readTimeout);
+            validateTrustedDomain();
+            return new TransparencyClient(baseUrl, connectTimeout, readTimeout, rootKeyCacheTtl);
+        }
+
+        private void validateTrustedDomain() {
+            String host = URI.create(baseUrl).getHost();
+            if (!TrustedDomainRegistry.isTrustedDomain(host)) {
+                throw new SecurityException(
+                    "Untrusted transparency log domain: " + host + ". "
+                    + "Trusted domains: " + TrustedDomainRegistry.getTrustedDomains());
+            }
         }
     }
 }
