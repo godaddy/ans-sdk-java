@@ -13,8 +13,6 @@ import org.bouncycastle.openssl.jcajce.JcaPEMWriter;
 import java.io.IOException;
 import java.io.StringReader;
 import java.io.StringWriter;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.security.Security;
 import java.security.cert.CertificateEncodingException;
 import java.security.cert.CertificateException;
@@ -209,14 +207,13 @@ public final class CertificateUtils {
             throw new IllegalArgumentException("Certificate cannot be null");
         }
         try {
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            byte[] digest = md.digest(certificate.getEncoded());
+            byte[] digest = CryptoCache.sha256(certificate.getEncoded());
             StringBuilder hex = new StringBuilder("SHA256:");
             for (byte b : digest) {
                 hex.append(String.format("%02x", b));
             }
             return hex.toString();
-        } catch (NoSuchAlgorithmException | CertificateEncodingException e) {
+        } catch (CertificateEncodingException e) {
             throw new RuntimeException("Failed to compute certificate fingerprint", e);
         }
     }
@@ -241,7 +238,7 @@ public final class CertificateUtils {
         return normalizedActual.equals(normalizedExpected);
     }
 
-    private static String normalizeFingerprint(String fingerprint) {
+    public static String normalizeFingerprint(String fingerprint) {
         String normalized = fingerprint.toLowerCase().trim();
         // Remove common prefixes
         if (normalized.startsWith("sha256:")) {

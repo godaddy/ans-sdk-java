@@ -69,11 +69,14 @@ subprojects {
         }
     }
 
-    tasks.withType<JacocoCoverageVerification> {
-        violationRules {
-            rule {
-                limit {
-                    minimum = "0.90".toBigDecimal()
+    // Only enforce 90% coverage on publishable modules (not examples)
+    if (publishableModules.contains(project.name)) {
+        tasks.withType<JacocoCoverageVerification> {
+            violationRules {
+                rule {
+                    limit {
+                        minimum = "0.90".toBigDecimal()
+                    }
                 }
             }
         }

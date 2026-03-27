@@ -3,10 +3,13 @@ package com.godaddy.ans.sdk.concurrent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -20,8 +23,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <h2>Default Configuration</h2>
  * <ul>
  *   <li>Pool size: 10 threads (suitable for most use cases)</li>
+ *   <li>Queue capacity: 100 tasks (bounded for back-pressure)</li>
  *   <li>Thread naming: "ans-io-{n}" for easy identification in thread dumps</li>
  *   <li>Daemon threads: Yes (won't prevent JVM shutdown)</li>
+ *   <li>Rejection policy: CallerRunsPolicy (executes on caller thread when queue is full)</li>
  * </ul>
  *
  * <h2>Usage</h2>
@@ -49,6 +54,12 @@ public final class AnsExecutors {
      * This is suitable for typical verification workloads involving DNS and HTTP I/O.
      */
     public static final int DEFAULT_POOL_SIZE = 10;
+
+    /**
+     * Default queue capacity for bounded task queues.
+     * When the queue is full, tasks are executed on the caller's thread (back-pressure).
+     */
+    public static final int DEFAULT_QUEUE_CAPACITY = 100;
 
     private static volatile ExecutorService sharedExecutor;
     private static final Object LOCK = new Object();
@@ -88,13 +99,44 @@ public final class AnsExecutors {
      * Creates a new I/O executor with the specified pool size.
      *
      * <p>Use this method if you need a dedicated executor with different sizing.
-     * The returned executor is NOT shared and should be managed by the caller.</p>
+     * The returned executor is NOT shared and should be managed by the caller.
+     * Uses a bounded queue with CallerRunsPolicy for back-pressure.</p>
      *
      * @param poolSize the number of threads in the pool
      * @return a new executor
      */
     public static ExecutorService newIoExecutor(int poolSize) {
-        return Executors.newFixedThreadPool(poolSize, new AnsThreadFactory());
+        return new ThreadPoolExecutor(
+            poolSize, poolSize,
+            60L, TimeUnit.SECONDS,
+            new ArrayBlockingQueue<>(DEFAULT_QUEUE_CAPACITY),
+            new AnsThreadFactory(),
+            new ThreadPoolExecutor.CallerRunsPolicy()
+        );
+    }
+
+    /**
+     * Creates a new scheduled executor with the specified core pool size.
+     *
+     * <p>Use this for operations that need to run on a schedule, such as
+     * SCITT artifact refresh or cache expiration.</p>
+     *
+     * @param corePoolSize the number of threads to keep in the pool
+     * @return a new scheduled executor
+     */
+    public static ScheduledExecutorService newScheduledExecutor(int corePoolSize) {
+        return Executors.newScheduledThreadPool(corePoolSize, new AnsThreadFactory("ans-scheduled"));
+    }
+
+    /**
+     * Creates a new single-threaded scheduled executor.
+     *
+     * <p>Use this for lightweight scheduled tasks that don't need parallelism.</p>
+     *
+     * @return a new single-threaded scheduled executor
+     */
+    public static ScheduledExecutorService newSingleThreadScheduledExecutor() {
+        return newScheduledExecutor(1);
     }
 
     /**
@@ -129,16 +171,17 @@ public final class AnsExecutors {
     /**
      * Returns whether the shared executor has been initialized.
      *
+     * <p>This method reads the volatile field directly without synchronization,
+     * which is safe for this diagnostic/testing use case.</p>
+     *
      * @return true if the shared executor exists
      */
     public static boolean isInitialized() {
-        synchronized (LOCK) {
-            return sharedExecutor != null;
-        }
+        return sharedExecutor != null;
     }
 
     private static ExecutorService createSharedExecutor(int poolSize) {
-        return Executors.newFixedThreadPool(poolSize, new AnsThreadFactory());
+        return newIoExecutor(poolSize);
     }
 
     /**
@@ -146,10 +189,19 @@ public final class AnsExecutors {
      */
     private static class AnsThreadFactory implements ThreadFactory {
         private final AtomicInteger threadNumber = new AtomicInteger(1);
+        private final String namePrefix;
+
+        AnsThreadFactory() {
+            this("ans-io");
+        }
+
+        AnsThreadFactory(String namePrefix) {
+            this.namePrefix = namePrefix;
+        }
 
         @Override
         public Thread newThread(Runnable r) {
-            Thread t = new Thread(r, "ans-io-" + threadNumber.getAndIncrement());
+            Thread t = new Thread(r, namePrefix + "-" + threadNumber.getAndIncrement());
             t.setDaemon(true);
             if (t.getPriority() != Thread.NORM_PRIORITY) {
                 t.setPriority(Thread.NORM_PRIORITY);

@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -183,5 +184,92 @@ class AnsExecutorsTest {
         startLatch.countDown();
         assertThat(doneLatch.await(10, TimeUnit.SECONDS)).isTrue();
         assertThat(firstExecutor.get()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("newScheduledExecutor should create functional scheduled executor")
+    void newScheduledExecutorShouldCreateFunctionalExecutor() throws Exception {
+        ScheduledExecutorService scheduler = AnsExecutors.newScheduledExecutor(2);
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<String> threadName = new AtomicReference<>();
+
+        try {
+            scheduler.schedule(() -> {
+                threadName.set(Thread.currentThread().getName());
+                latch.countDown();
+            }, 10, TimeUnit.MILLISECONDS);
+
+            assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(threadName.get()).startsWith("ans-scheduled-");
+        } finally {
+            scheduler.shutdown();
+        }
+    }
+
+    @Test
+    @DisplayName("newScheduledExecutor threads should be daemon threads")
+    void newScheduledExecutorThreadsShouldBeDaemon() throws Exception {
+        ScheduledExecutorService scheduler = AnsExecutors.newScheduledExecutor(1);
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Boolean> isDaemon = new AtomicReference<>();
+
+        try {
+            scheduler.execute(() -> {
+                isDaemon.set(Thread.currentThread().isDaemon());
+                latch.countDown();
+            });
+
+            assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(isDaemon.get()).isTrue();
+        } finally {
+            scheduler.shutdown();
+        }
+    }
+
+    @Test
+    @DisplayName("newSingleThreadScheduledExecutor should create single-threaded executor")
+    void newSingleThreadScheduledExecutorShouldCreateSingleThreadedExecutor() throws Exception {
+        ScheduledExecutorService scheduler = AnsExecutors.newSingleThreadScheduledExecutor();
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<String> threadName = new AtomicReference<>();
+
+        try {
+            scheduler.schedule(() -> {
+                threadName.set(Thread.currentThread().getName());
+                latch.countDown();
+            }, 10, TimeUnit.MILLISECONDS);
+
+            assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(threadName.get()).startsWith("ans-scheduled-");
+        } finally {
+            scheduler.shutdown();
+        }
+    }
+
+    @Test
+    @DisplayName("newSingleThreadScheduledExecutor should be a daemon thread")
+    void newSingleThreadScheduledExecutorShouldBeDaemon() throws Exception {
+        ScheduledExecutorService scheduler = AnsExecutors.newSingleThreadScheduledExecutor();
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Boolean> isDaemon = new AtomicReference<>();
+
+        try {
+            scheduler.execute(() -> {
+                isDaemon.set(Thread.currentThread().isDaemon());
+                latch.countDown();
+            });
+
+            assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(isDaemon.get()).isTrue();
+        } finally {
+            scheduler.shutdown();
+        }
+    }
+
+    @Test
+    @DisplayName("DEFAULT_QUEUE_CAPACITY should be reasonable")
+    void defaultQueueCapacityShouldBeReasonable() {
+        assertThat(AnsExecutors.DEFAULT_QUEUE_CAPACITY).isGreaterThanOrEqualTo(50);
+        assertThat(AnsExecutors.DEFAULT_QUEUE_CAPACITY).isLessThanOrEqualTo(1000);
     }
 }
