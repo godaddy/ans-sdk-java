@@ -2,6 +2,7 @@ val jacksonVersion: String by project
 val bouncyCastleVersion: String by project
 val slf4jVersion: String by project
 val reactorVersion: String by project
+val caffeineVersion: String by project
 val junitVersion: String by project
 val mockitoVersion: String by project
 val assertjVersion: String by project
@@ -28,6 +29,9 @@ dependencies {
     // dnsjava for DANE/TLSA DNS lookups (JNDI doesn't support TLSA)
     implementation("dnsjava:dnsjava:3.6.4")
 
+    // Caffeine for high-performance caching with TTL and automatic eviction
+    implementation("com.github.ben-manes.caffeine:caffeine:$caffeineVersion")
+
     // Logging
     implementation("org.slf4j:slf4j-api:$slf4jVersion")
 
@@ -38,5 +42,6 @@ dependencies {
     testImplementation("org.assertj:assertj-core:$assertjVersion")
     testImplementation("org.wiremock:wiremock:$wiremockVersion")
     testImplementation("io.projectreactor:reactor-test:$reactorVersion")
+    testImplementation("com.upokecenter:cbor:4.5.4")
     testRuntimeOnly("org.slf4j:slf4j-simple:$slf4jVersion")
 }
