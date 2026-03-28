@@ -120,7 +120,7 @@ public final class AnsConfiguration {
      */
     public static final class Builder {
 
-        private Environment environment = Environment.OTE;
+        private Environment environment;
         private String baseUrl;
         private AnsCredentialsProvider credentialsProvider;
         private Duration connectTimeout;
@@ -206,6 +206,9 @@ public final class AnsConfiguration {
          * @throws NullPointerException if required fields are not set
          */
         public AnsConfiguration build() {
+            if( this.environment == null) {
+                throw new IllegalStateException("Environment is required");
+            }
             return new AnsConfiguration(this);
         }
     }
