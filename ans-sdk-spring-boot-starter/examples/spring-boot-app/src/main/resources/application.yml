@@ -1,0 +1,14 @@
+# ANS SDK Configuration
+# Environment variables ANS_API_KEY and ANS_API_SECRET must be set before running.
+ans:
+  environment: OTE
+  credentials:
+    type: api-key
+    api-key: ${ANS_API_KEY}
+    api-secret: ${ANS_API_SECRET}
+  connect-timeout: 15s
+  read-timeout: 45s
+  max-retries: 3
+
+server:
+  port: 8080
