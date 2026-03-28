@@ -71,6 +71,7 @@ class DiscoveryClientTest {
         String baseUrl = wmRuntimeInfo.getHttpBaseUrl();
 
         DiscoveryClient client = DiscoveryClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -137,6 +138,7 @@ class DiscoveryClientTest {
                 .withBody(agentDetailsResponse())));
 
         DiscoveryClient client = DiscoveryClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -196,6 +198,7 @@ class DiscoveryClientTest {
                 .withBody(agentDetailsResponse())));
 
         DiscoveryClient client = DiscoveryClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -228,6 +231,7 @@ class DiscoveryClientTest {
                 .withBody(agentDetailsResponse())));
 
         DiscoveryClient client = DiscoveryClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -253,6 +257,7 @@ class DiscoveryClientTest {
                 .withBody("{\"status\":\"error\",\"code\":\"NOT_FOUND\",\"message\":\"Agent not found\"}")));
 
         DiscoveryClient client = DiscoveryClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -274,6 +279,7 @@ class DiscoveryClientTest {
                 .withBody("{\"status\":\"error\",\"code\":\"UNAUTHORIZED\",\"message\":\"Invalid credentials\"}")));
 
         DiscoveryClient client = DiscoveryClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -295,6 +301,7 @@ class DiscoveryClientTest {
                 .withBody("{\"status\":\"error\",\"code\":\"FORBIDDEN\",\"message\":\"Access denied\"}")));
 
         DiscoveryClient client = DiscoveryClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -317,6 +324,7 @@ class DiscoveryClientTest {
                         + "\"message\":\"Invalid version format\"}")));
 
         DiscoveryClient client = DiscoveryClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -338,6 +346,7 @@ class DiscoveryClientTest {
                 .withBody("{\"status\":\"error\",\"code\":\"INTERNAL_ERROR\",\"message\":\"Internal server error\"}")));
 
         DiscoveryClient client = DiscoveryClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -360,6 +369,7 @@ class DiscoveryClientTest {
                 .withBody("{\"ansName\":\"ans://v1.0.0.booking-agent.example.com\",\"links\":[]}")));
 
         DiscoveryClient client = DiscoveryClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -381,6 +391,7 @@ class DiscoveryClientTest {
                 .withBody("{\"status\":\"error\",\"code\":\"NOT_FOUND\",\"message\":\"Agent not found\"}")));
 
         DiscoveryClient client = DiscoveryClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -406,6 +417,7 @@ class DiscoveryClientTest {
                 .withBody(agentDetailsResponse())));
 
         DiscoveryClient client = DiscoveryClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -433,6 +445,7 @@ class DiscoveryClientTest {
                 .withBody("{\"status\":\"error\",\"code\":\"NOT_FOUND\",\"message\":\"Agent not found\"}")));
 
         DiscoveryClient client = DiscoveryClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -454,6 +467,7 @@ class DiscoveryClientTest {
                 .withBody("{\"status\":\"error\",\"code\":\"UNAUTHORIZED\",\"message\":\"Invalid token\"}")));
 
         DiscoveryClient client = DiscoveryClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -475,6 +489,7 @@ class DiscoveryClientTest {
                 .withBody(agentDetailsResponse())));
 
         DiscoveryClient client = DiscoveryClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -498,6 +513,7 @@ class DiscoveryClientTest {
                 .withBody("{\"status\":\"error\",\"code\":\"NOT_FOUND\",\"message\":\"Agent not found\"}")));
 
         DiscoveryClient client = DiscoveryClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -540,6 +556,7 @@ class DiscoveryClientTest {
                 .withBody(agentDetailsResponse())));
 
         DiscoveryClient client = DiscoveryClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -562,6 +579,7 @@ class DiscoveryClientTest {
                 .withBody("{ invalid json }")));
 
         DiscoveryClient client = DiscoveryClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -589,6 +607,7 @@ class DiscoveryClientTest {
                 .withBody("{ not valid json }")));
 
         DiscoveryClient client = DiscoveryClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -610,6 +629,7 @@ class DiscoveryClientTest {
                 .withBody("{\"status\":\"error\",\"message\":\"Bad request\"}")));
 
         DiscoveryClient client = DiscoveryClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -637,6 +657,7 @@ class DiscoveryClientTest {
                 .withBody(agentDetailsResponse())));
 
         DiscoveryClient client = DiscoveryClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -668,6 +689,7 @@ class DiscoveryClientTest {
                 .withBody(agentDetailsResponse())));
 
         DiscoveryClient client = DiscoveryClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -695,6 +717,7 @@ class DiscoveryClientTest {
                 .withBody("{\"status\":\"error\",\"message\":\"Internal error\"}")));
 
         DiscoveryClient client = DiscoveryClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();

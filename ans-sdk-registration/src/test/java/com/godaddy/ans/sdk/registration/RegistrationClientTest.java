@@ -63,6 +63,7 @@ class RegistrationClientTest {
         String baseUrl = wmRuntimeInfo.getHttpBaseUrl();
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -140,6 +141,7 @@ class RegistrationClientTest {
                 .withBody(agentDetailsResponse())));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -183,6 +185,7 @@ class RegistrationClientTest {
                     + "\"message\":\"Invalid version format\"}")));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -216,6 +219,7 @@ class RegistrationClientTest {
                 .withBody(agentStatusResponse(AgentLifecycleStatus.PENDING_DNS))));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -238,6 +242,7 @@ class RegistrationClientTest {
                 .withBody("{\"status\":\"error\",\"code\":\"NOT_FOUND\",\"message\":\"Agent not found\"}")));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -261,6 +266,7 @@ class RegistrationClientTest {
                 .withBody(agentStatusResponse(AgentLifecycleStatus.ACTIVE))));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -283,6 +289,7 @@ class RegistrationClientTest {
                 .withBody("{\"status\":\"error\",\"code\":\"UNAUTHORIZED\",\"message\":\"Invalid token\"}")));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -306,6 +313,7 @@ class RegistrationClientTest {
                 .withBody(revocationResponse())));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -340,6 +348,7 @@ class RegistrationClientTest {
                 .withBody(revocationResponse())));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -366,6 +375,7 @@ class RegistrationClientTest {
                 .withBody("{\"status\":\"error\",\"code\":\"NOT_FOUND\",\"message\":\"Agent not found\"}")));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -389,6 +399,7 @@ class RegistrationClientTest {
                     + "\"message\":\"Agent is already in REVOKED state\"}")));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -412,6 +423,7 @@ class RegistrationClientTest {
                     + "\"message\":\"Cannot revoke agent in PENDING_VALIDATION state\"}")));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -436,6 +448,7 @@ class RegistrationClientTest {
                 .withBody(agentDetailsResponse())));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -459,6 +472,7 @@ class RegistrationClientTest {
                 .withBody("{\"status\":\"error\",\"code\":\"NOT_FOUND\",\"message\":\"Agent not found\"}")));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -488,6 +502,7 @@ class RegistrationClientTest {
                 .withBody(agentDetailsResponse())));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -520,6 +535,7 @@ class RegistrationClientTest {
                 .withBody(agentStatusResponse(AgentLifecycleStatus.PENDING_DNS))));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -542,6 +558,7 @@ class RegistrationClientTest {
                 .withBody(agentStatusResponse(AgentLifecycleStatus.ACTIVE))));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -564,6 +581,7 @@ class RegistrationClientTest {
                 .withBody(revocationResponse())));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -589,6 +607,7 @@ class RegistrationClientTest {
                 .withBody(revocationResponse())));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();

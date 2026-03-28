@@ -32,6 +32,7 @@ class ResolutionServiceTest {
         when(mockProvider.resolveCredentials()).thenReturn(mockCredentials);
 
         AnsConfiguration config = AnsConfiguration.builder()
+            .environment(com.godaddy.ans.sdk.config.Environment.OTE)
             .credentialsProvider(mockProvider)
             .baseUrl("https://api.example.com")
             .build();

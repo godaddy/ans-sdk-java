@@ -20,10 +20,14 @@ class RegistrationService {
 
     private final AnsApiClient httpClient;
 
+    @Deprecated(since = "Use RegistrationService(AnsConfiguration) constructor instead", forRemoval = true)
     RegistrationService(AnsConfiguration configuration) {
         this.httpClient = new AnsApiClient(configuration);
     }
 
+    RegistrationService(final AnsApiClient ansApiClient) {
+        this.httpClient = ansApiClient;
+    }
     /**
      * Registers a new agent and returns full agent details.
      *
