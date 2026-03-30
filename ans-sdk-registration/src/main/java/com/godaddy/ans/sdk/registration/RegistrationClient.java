@@ -56,7 +56,8 @@ public final class RegistrationClient {
 
     private RegistrationClient(AnsConfiguration configuration) {
         this.configuration = configuration;
-        this.registrationService = new RegistrationService(configuration);
+        var ansClient = new AnsApiClient(configuration);
+        this.registrationService = new RegistrationService(ansClient);
         this.certificateService = new CertificateService(configuration);
     }
 

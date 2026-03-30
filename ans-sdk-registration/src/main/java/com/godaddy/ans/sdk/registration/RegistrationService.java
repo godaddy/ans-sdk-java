@@ -20,7 +20,7 @@ class RegistrationService {
 
     private final AnsApiClient httpClient;
 
-    @Deprecated(since = "Use RegistrationService(AnsConfiguration) constructor instead", forRemoval = true)
+    @Deprecated(since = "Use RegistrationService(AnsApiClient) constructor instead", forRemoval = true)
     RegistrationService(AnsConfiguration configuration) {
         this.httpClient = new AnsApiClient(configuration);
     }
