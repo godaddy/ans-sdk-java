@@ -3,8 +3,6 @@ package com.godaddy.ans.sdk.transparency;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
-import com.github.benmanes.caffeine.cache.AsyncLoadingCache;
-import com.github.benmanes.caffeine.cache.Caffeine;
 import com.godaddy.ans.sdk.exception.AnsNotFoundException;
 import com.godaddy.ans.sdk.exception.AnsServerException;
 import com.godaddy.ans.sdk.transparency.model.AgentAuditParams;
@@ -20,10 +18,6 @@ import com.godaddy.ans.sdk.transparency.scitt.RefreshDecision;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.godaddy.ans.sdk.crypto.CryptoCache;
-
-import org.bouncycastle.util.encoders.Hex;
-
 import java.io.IOException;
 import java.net.URI;
 import java.net.URLEncoder;
@@ -31,79 +25,27 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.security.KeyFactory;
-import java.security.NoSuchAlgorithmException;
 import java.security.PublicKey;
-import java.security.spec.X509EncodedKeySpec;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Base64;
-import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.StringJoiner;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Internal service for handling transparency log API calls.
  */
-class TransparencyService {
+class TransparencyService implements AutoCloseable {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(TransparencyService.class);
     private static final String SCHEMA_VERSION_HEADER = "X-Schema-Version";
-
-    private static final String ROOT_KEY_CACHE_KEY = "root";
-
-    /**
-     * Maximum number of root keys to cache. Prevents DoS from unbounded key sets.
-     */
-    private static final int MAX_ROOT_KEYS = 20;
-
-    /**
-     * Global cooldown between cache refresh attempts to prevent cache thrashing.
-     */
-    private static final Duration REFRESH_COOLDOWN = Duration.ofSeconds(30);
-
-    /**
-     * Maximum tolerance for artifact timestamps in the future (clock skew).
-     */
-    private static final Duration FUTURE_TOLERANCE = Duration.ofSeconds(60);
-
-    /**
-     * Tolerance for artifacts issued slightly before cache refresh (race conditions).
-     */
-    private static final Duration PAST_TOLERANCE = Duration.ofMinutes(5);
-
-    /**
-     * Cached KeyFactory instance. Thread-safe after initialization.
-     */
-    private static final KeyFactory EC_KEY_FACTORY;
-
-    static {
-        try {
-            EC_KEY_FACTORY = KeyFactory.getInstance("EC");
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("EC algorithm not available", e);
-        }
-    }
 
     private final String baseUrl;
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
     private final Duration readTimeout;
-
-    // Root keys cache with automatic TTL and stampede prevention (keyed by hex key ID)
-    private final AsyncLoadingCache<String, Map<String, PublicKey>> rootKeyCache;
-
-    // Timestamp when cache was last populated (for refresh-on-miss logic)
-    private final AtomicReference<Instant> cachePopulatedAt = new AtomicReference<>(Instant.EPOCH);
-
-    // Timestamp of last refresh attempt (for cooldown enforcement)
-    private final AtomicReference<Instant> lastRefreshAttempt = new AtomicReference<>(Instant.EPOCH);
+    private final RootKeyManager rootKeyManager;
 
     TransparencyService(String baseUrl, Duration connectTimeout, Duration readTimeout, Duration rootKeyCacheTtl) {
         this.baseUrl = baseUrl;
@@ -115,12 +57,7 @@ class TransparencyService {
         this.objectMapper = new ObjectMapper();
         this.objectMapper.registerModule(new JavaTimeModule());
         this.objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
-
-        // Build root keys cache with TTL - stampede prevention is automatic
-        this.rootKeyCache = Caffeine.newBuilder()
-            .maximumSize(1)
-            .expireAfterWrite(rootKeyCacheTtl)
-            .buildAsync((key, executor) -> fetchRootKeysFromServerAsync());
+        this.rootKeyManager = new RootKeyManager(httpClient, baseUrl, readTimeout, rootKeyCacheTtl);
     }
 
     /**
@@ -267,15 +204,14 @@ class TransparencyService {
      * @return a CompletableFuture with the root public keys for verifying receipts and status tokens
      */
     CompletableFuture<Map<String, PublicKey>> getRootKeysAsync() {
-        return rootKeyCache.get(ROOT_KEY_CACHE_KEY);
+        return rootKeyManager.getRootKeysAsync();
     }
 
     /**
      * Invalidates the cached root key, forcing the next call to fetch from the server.
      */
     void invalidateRootKeyCache() {
-        rootKeyCache.synchronous().invalidate(ROOT_KEY_CACHE_KEY);
-        LOGGER.debug("Root key cache invalidated");
+        rootKeyManager.invalidateRootKeyCache();
     }
 
     /**
@@ -284,7 +220,7 @@ class TransparencyService {
      * @return the cache population timestamp, or {@link Instant#EPOCH} if never populated
      */
     Instant getCachePopulatedAt() {
-        return cachePopulatedAt.get();
+        return rootKeyManager.getCachePopulatedAt();
     }
 
     /**
@@ -299,186 +235,19 @@ class TransparencyService {
      * </ol>
      *
      * @param artifactIssuedAt the issued-at timestamp from the SCITT artifact
-     * @return the refresh decision with action, reason, and optionally refreshed keys
+     * @return a future containing the refresh decision with action, reason, and optionally refreshed keys
      */
-    RefreshDecision refreshRootKeysIfNeeded(Instant artifactIssuedAt) {
-        Instant now = Instant.now();
-        Instant cacheTime = cachePopulatedAt.get();
-
-        // Check 1: Reject artifacts from the future (beyond clock skew tolerance)
-        if (artifactIssuedAt.isAfter(now.plus(FUTURE_TOLERANCE))) {
-            LOGGER.warn("Artifact timestamp {} is in the future (now={}), rejecting",
-                artifactIssuedAt, now);
-            return RefreshDecision.reject("Artifact timestamp is in the future");
-        }
-
-        // Check 2: Reject artifacts older than cache (with past tolerance for race conditions)
-        // If artifact was issued before we refreshed cache, the key SHOULD be there
-        if (artifactIssuedAt.isBefore(cacheTime.minus(PAST_TOLERANCE))) {
-            LOGGER.debug("Artifact issued at {} predates cache refresh at {} (with {}min tolerance), "
-                + "key should be present - rejecting refresh",
-                artifactIssuedAt, cacheTime, PAST_TOLERANCE.toMinutes());
-            return RefreshDecision.reject(
-                "Key not found and artifact predates cache refresh");
-        }
-
-        // Check 3: Enforce global cooldown to prevent cache thrashing
-        Instant lastAttempt = lastRefreshAttempt.get();
-        if (lastAttempt.plus(REFRESH_COOLDOWN).isAfter(now)) {
-            Duration remaining = Duration.between(now, lastAttempt.plus(REFRESH_COOLDOWN));
-            LOGGER.debug("Cache refresh on cooldown, {} remaining", remaining);
-            return RefreshDecision.defer(
-                "Cache was recently refreshed, retry in " + remaining.toSeconds() + "s");
-        }
-
-        // All checks passed - attempt refresh
-        LOGGER.info("Artifact issued at {} is newer than cache at {}, refreshing root keys",
-            artifactIssuedAt, cacheTime);
-
-        // Update cooldown timestamp before fetch to prevent concurrent refresh attempts
-        lastRefreshAttempt.set(now);
-
-        try {
-            // Invalidate and fetch fresh keys
-            invalidateRootKeyCache();
-            Map<String, PublicKey> freshKeys = getRootKeysAsync().join();
-            LOGGER.info("Cache refresh complete, now have {} keys", freshKeys.size());
-            return RefreshDecision.refreshed(freshKeys);
-        } catch (Exception e) {
-            LOGGER.error("Failed to refresh root keys: {}", e.getMessage());
-            return RefreshDecision.defer("Failed to refresh: " + e.getMessage());
-        }
+    CompletableFuture<RefreshDecision> refreshRootKeysIfNeeded(Instant artifactIssuedAt) {
+        return rootKeyManager.refreshRootKeysIfNeeded(artifactIssuedAt);
     }
 
-    /**
-     * Fetches the SCITT root public keys from the /root-keys endpoint asynchronously.
-     */
-    private CompletableFuture<Map<String, PublicKey>> fetchRootKeysFromServerAsync() {
-        LOGGER.info("Fetching root keys from server");
-        HttpRequest request = HttpRequest.newBuilder()
-            .uri(URI.create(baseUrl + "/root-keys"))
-            .header("Accept", "application/json")
-            .timeout(readTimeout)
-            .GET()
-            .build();
-
-        return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString())
-            .thenApply(response -> {
-                if (response.statusCode() != 200) {
-                    throw new AnsServerException(
-                        "Failed to fetch root keys: HTTP " + response.statusCode(),
-                        response.statusCode(),
-                        response.headers().firstValue("X-Request-Id").orElse(null));
-                }
-                Map<String, PublicKey> keys = parsePublicKeysResponse(response.body());
-                cachePopulatedAt.set(Instant.now());
-                LOGGER.info("Fetched and cached {} root key(s) at {}", keys.size(), cachePopulatedAt.get());
-                return keys;
-            });
-    }
-
-    /**
-     * Parses public keys from the root-keys API response.
-     *
-     * <p>Format is C2SP note: each line is {@code name+key_hash+base64_public_key}</p>
-     * <p>Example:</p>
-     * <pre>
-     * transparency.ans.godaddy.com+bb7ed8cf+AjBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IAB...
-     * transparency.ans.godaddy.com+cc8fe9d0+AjBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IAB...
-     * </pre>
-     *
-     * <p>Returns a map keyed by hex key ID (4-byte SHA-256 of SPKI-DER) for O(1) lookup.</p>
-     *
-     * @param responseBody the raw response body (text/plain, C2SP note format)
-     * @return map of hex key ID to public key
-     * @throws IllegalArgumentException if no valid keys found or too many keys
-     */
-    private Map<String, PublicKey> parsePublicKeysResponse(String responseBody) {
-        Map<String, PublicKey> keys = new HashMap<>();
-        List<String> parseErrors = new ArrayList<>();
-
-        String[] lines = responseBody.split("\n");
-        int lineNum = 0;
-        for (String line : lines) {
-            lineNum++;
-            line = line.trim();
-            if (line.isEmpty() || line.startsWith("#")) {
-                continue;
+    @Override
+    public void close() {
+        httpClient.executor().ifPresent(e -> {
+            if (e instanceof java.util.concurrent.ExecutorService es) {
+                es.shutdown();
             }
-
-            // Check max keys limit
-            if (keys.size() >= MAX_ROOT_KEYS) {
-                LOGGER.warn("Reached max root keys limit ({}), ignoring remaining keys", MAX_ROOT_KEYS);
-                break;
-            }
-
-            // C2SP format: name+key_hash+base64_key (limit split to 3 since base64 can contain '+')
-            String[] parts = line.split("\\+", 3);
-            if (parts.length != 3) {
-                String error = String.format("Line %d: expected C2SP format (name+hash+key), got %d parts",
-                    lineNum, parts.length);
-                LOGGER.debug("Public key parse failed - {}", error);
-                parseErrors.add(error);
-                continue;
-            }
-
-            try {
-                PublicKey key = decodePublicKey(parts[2].trim());
-                String hexKeyId = computeHexKeyId(key);
-                if (keys.containsKey(hexKeyId)) {
-                    LOGGER.warn("Duplicate key ID {} at line {}, skipping", hexKeyId, lineNum);
-                } else {
-                    keys.put(hexKeyId, key);
-                    LOGGER.debug("Parsed key with ID {} at line {}", hexKeyId, lineNum);
-                }
-            } catch (Exception e) {
-                String error = String.format("Line %d: %s", lineNum, e.getMessage());
-                LOGGER.debug("Public key parse failed - {}", error);
-                parseErrors.add(error);
-            }
-        }
-
-        if (keys.isEmpty()) {
-            String errorDetail = parseErrors.isEmpty()
-                ? "No parseable key lines found"
-                : "Parse attempts failed: " + String.join("; ", parseErrors);
-            throw new IllegalArgumentException("Could not parse any public keys from response. " + errorDetail);
-        }
-
-        return keys;
-    }
-
-    /**
-     * Computes the hex key ID for a public key per C2SP specification.
-     *
-     * <p>The key ID is the first 4 bytes of SHA-256(SPKI-DER), where SPKI-DER
-     * is the Subject Public Key Info DER encoding of the public key.</p>
-     *
-     * @param publicKey the public key
-     * @return the 8-character hex key ID
-     */
-    static String computeHexKeyId(PublicKey publicKey) {
-        byte[] spkiDer = publicKey.getEncoded();
-        byte[] hash = CryptoCache.sha256(spkiDer);
-        return Hex.toHexString(Arrays.copyOf(hash, 4));
-    }
-
-    /**
-     * Decodes a base64-encoded public key.
-     */
-    private PublicKey decodePublicKey(String base64Key) throws Exception {
-        byte[] keyBytes = Base64.getDecoder().decode(base64Key);
-
-        // C2SP note format includes a version byte prefix (0x02) before the SPKI-DER data.
-        // We need to strip it to get valid SPKI-DER for Java's KeyFactory.
-        // Detection: SPKI-DER starts with 0x30 (SEQUENCE tag), C2SP prefixed data starts with 0x02.
-        if (keyBytes.length > 0 && keyBytes[0] == 0x02) {
-            // Strip C2SP version byte (first byte)
-            keyBytes = Arrays.copyOfRange(keyBytes, 1, keyBytes.length);
-        }
-
-        X509EncodedKeySpec keySpec = new X509EncodedKeySpec(keyBytes);
-        return EC_KEY_FACTORY.generatePublic(keySpec);
+        });
     }
 
     /**
@@ -582,8 +351,7 @@ class TransparencyService {
                 result.setParsedPayload(v0);
             }
         } catch (IllegalArgumentException e) {
-            // If conversion fails, leave parsedPayload as null
-            // The raw payload is still available
+            LOGGER.warn("Failed to parse {} payload: {}", schemaVersion, e.getMessage());
         }
     }
 

@@ -1,5 +1,6 @@
 package com.godaddy.ans.sdk.agent.verification;
 
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -45,6 +46,7 @@ class DefaultCertificateFetcherTest {
     class GetCertificateTests {
 
         @Test
+        @Disabled("Requires network access - run manually on dev machine to verify SSL certificate fetching")
         @DisplayName("Should fetch certificate from real host")
         void shouldFetchCertificateFromRealHost() throws IOException {
             // Connect to a well-known host

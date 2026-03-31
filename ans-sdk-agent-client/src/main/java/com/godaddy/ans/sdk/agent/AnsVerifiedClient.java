@@ -1,19 +1,22 @@
 package com.godaddy.ans.sdk.agent;
 
 import com.godaddy.ans.sdk.agent.http.AnsVerifiedSslContextFactory;
-import com.godaddy.ans.sdk.agent.verification.BadgeVerifier;
+import com.godaddy.ans.sdk.agent.http.CapturedCertificateProvider;
+import com.godaddy.ans.sdk.agent.http.CertificateCapturingTrustManager;
 import com.godaddy.ans.sdk.agent.verification.DaneConfig;
-import com.godaddy.ans.sdk.agent.verification.DaneVerifier;
 import com.godaddy.ans.sdk.agent.verification.DefaultConnectionVerifier;
 import com.godaddy.ans.sdk.agent.verification.DefaultDaneTlsaVerifier;
 import com.godaddy.ans.sdk.agent.verification.PreVerificationResult;
 import com.godaddy.ans.sdk.agent.exception.ClientConfigurationException;
 import com.godaddy.ans.sdk.agent.exception.ScittVerificationException;
-import com.godaddy.ans.sdk.agent.verification.ScittVerifierAdapter;
 import com.godaddy.ans.sdk.transparency.TransparencyClient;
 import com.godaddy.ans.sdk.transparency.scitt.DefaultScittHeaderProvider;
+import com.godaddy.ans.sdk.transparency.scitt.ScittParseException;
 import com.godaddy.ans.sdk.transparency.scitt.ScittPreVerifyResult;
-import com.godaddy.ans.sdk.transparency.verification.CachingBadgeVerificationService;
+import com.godaddy.ans.sdk.transparency.scitt.StatusToken;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.Expiry;
 import org.bouncycastle.util.Arrays;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,11 +29,14 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.security.GeneralSecurityException;
 import java.security.KeyStore;
+import java.security.cert.X509Certificate;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.CompletionException;
 
 /**
@@ -77,10 +83,31 @@ public class AnsVerifiedClient implements AutoCloseable {
     private final SSLContext sslContext;
     private final HttpClient httpClient;
     private final String agentId;
+    private final CertificateCapturingTrustManager trustManager;
 
-    // Lazy-loaded SCITT headers with thread-safe initialization
-    private volatile Map<String, String> scittHeaders;
-    private final Object scittHeadersLock = new Object();
+    private static final String CACHE_KEY = "scitt";
+
+    /** Minimum TTL for cached SCITT headers (floor). */
+    private static final Duration MIN_CACHE_TTL = Duration.ofMinutes(1);
+
+    /** Maximum TTL for cached SCITT headers (ceiling). */
+    private static final Duration MAX_CACHE_TTL = Duration.ofMinutes(30);
+
+    /** Fraction of token lifetime at which to refresh (refresh before expiry). */
+    private static final double REFRESH_FRACTION = 0.8;
+
+    /** Cooldown after a failed SCITT fetch to avoid retry storms. */
+    private static final Duration FETCH_FAILURE_COOLDOWN = Duration.ofSeconds(30);
+
+    /**
+     * Cached SCITT headers with token expiry metadata.
+     */
+    record CachedScittHeaders(Map<String, String> headers, Instant tokenExpiresAt) { }
+
+    // TTL-aware cache for SCITT headers keyed on a fixed string.
+    private final Cache<String, CachedScittHeaders> scittHeaderCache;
+
+    private final AtomicReference<Instant> lastFetchFailure = new AtomicReference<>(Instant.EPOCH);
 
     private AnsVerifiedClient(Builder builder) {
         this.transparencyClient = builder.transparencyClient;
@@ -88,16 +115,43 @@ public class AnsVerifiedClient implements AutoCloseable {
         this.policy = builder.policy;
         this.sslContext = builder.sslContext;
         this.agentId = builder.agentId;
+        this.trustManager = builder.trustManager;
 
-        // If SCITT is disabled or no agentId, headers are empty (no lazy fetch needed)
+        // Build a Caffeine cache that respects token expiration
+        this.scittHeaderCache = Caffeine.newBuilder()
+            .maximumSize(1)
+            .expireAfter(new Expiry<String, CachedScittHeaders>() {
+                @Override
+                public long expireAfterCreate(String key, CachedScittHeaders value,
+                        long currentTime) {
+                    return computeExpiryNanos(value);
+                }
+
+                @Override
+                public long expireAfterUpdate(String key, CachedScittHeaders value,
+                        long currentTime, long currentDuration) {
+                    return computeExpiryNanos(value);
+                }
+
+                @Override
+                public long expireAfterRead(String key, CachedScittHeaders value,
+                        long currentTime, long currentDuration) {
+                    return currentDuration; // Don't extend on read
+                }
+            })
+            .build();
+
+        // If SCITT is disabled or no agentId, cache permanently-empty headers
         if (!policy.hasScittVerification() || agentId == null || agentId.isBlank()) {
-            this.scittHeaders = Map.of();
+            scittHeaderCache.put(CACHE_KEY,
+                new CachedScittHeaders(Map.of(), Instant.MAX));
         }
 
         // Create shared HttpClient once at construction time
         // HttpClient is designed to be long-lived and maintains its own connection pool
         this.httpClient = HttpClient.newBuilder()
             .sslContext(sslContext)
+            .sslParameters(AnsVerifiedSslContextFactory.getSecureSslParameters())
             .connectTimeout(builder.connectTimeout)
             .build();
     }
@@ -112,75 +166,94 @@ public class AnsVerifiedClient implements AutoCloseable {
     }
 
     /**
-     * Returns SCITT headers asynchronously.
+     * Fetches SCITT headers asynchronously with TTL-aware caching.
      *
-     * <p>If headers haven't been fetched yet and SCITT is enabled with an agent ID,
-     * this method initiates an async fetch of the receipt and status token from the
-     * transparency log. The returned future completes when headers are available.</p>
+     * <p>Headers are cached with a TTL derived from the status token's expiration time.
+     * When the cache entry expires (at ~80% of token lifetime), the next call triggers
+     * a fresh fetch from the transparency log.</p>
      *
      * <p>The future completes with an empty map if:</p>
      * <ul>
      *   <li>SCITT verification is disabled in the policy</li>
      *   <li>No agent ID was configured</li>
-     *   <li>Fetching artifacts failed (logged as warning)</li>
+     *   <li>Fetching artifacts failed (logged as warning, allows retry on next call)</li>
      * </ul>
      *
      * @return a CompletableFuture with the unmodifiable map of SCITT headers
      */
-    public CompletableFuture<Map<String, String>> scittHeadersAsync() {
-        // Fast path: already initialized
-        if (scittHeaders != null) {
-            return CompletableFuture.completedFuture(scittHeaders);
+    public CompletableFuture<Map<String, String>> fetchScittHeadersAsync() {
+        // Fast path: return cached headers if present and not expired
+        CachedScittHeaders cached = scittHeaderCache.getIfPresent(CACHE_KEY);
+        if (cached != null) {
+            return CompletableFuture.completedFuture(cached.headers());
         }
 
-        // Lazy fetch with double-checked locking
-        return fetchScittHeadersAsync();
-    }
-
-    /**
-     * Fetches SCITT headers lazily with thread-safe initialization.
-     */
-    private CompletableFuture<Map<String, String>> fetchScittHeadersAsync() {
-        // Double-check after acquiring would-be lock position in async chain
-        if (scittHeaders != null) {
-            return CompletableFuture.completedFuture(scittHeaders);
+        // Circuit breaker: skip fetch if last failure was recent
+        Instant lastFailure = lastFetchFailure.get();
+        if (lastFailure.plus(FETCH_FAILURE_COOLDOWN).isAfter(Instant.now())) {
+            LOGGER.debug("SCITT fetch in cooldown (last failure: {}), returning empty",
+                    lastFailure);
+            return CompletableFuture.completedFuture(Map.of());
         }
 
-        LOGGER.debug("Fetching SCITT artifacts for agent {} (lazy)", agentId);
+        LOGGER.debug("Fetching SCITT artifacts for agent {} (cache miss)", agentId);
 
         // Fetch receipt and token in parallel
         CompletableFuture<byte[]> receiptFuture = transparencyClient.getReceiptAsync(agentId);
         CompletableFuture<byte[]> tokenFuture = transparencyClient.getStatusTokenAsync(agentId);
 
         return receiptFuture.thenCombine(tokenFuture, (receipt, token) -> {
-            synchronized (scittHeadersLock) {
-                // Double-check inside synchronized block
-                if (scittHeaders != null) {
-                    return scittHeaders;
-                }
-
-                Map<String, String> headers = Map.copyOf(DefaultScittHeaderProvider.builder()
+            Map<String, String> headers = Map.copyOf(DefaultScittHeaderProvider.builder()
                     .receipt(receipt)
                     .statusToken(token)
                     .build()
                     .getOutgoingHeaders());
 
-                LOGGER.debug("Fetched SCITT artifacts: receipt={} bytes, token={} bytes",
-                    receipt.length, token.length);
+            // Parse token to extract expiry for cache TTL
+            Instant tokenExpiresAt = extractTokenExpiry(token);
 
-                scittHeaders = headers;
-                return headers;
-            }
+            LOGGER.debug("Fetched SCITT artifacts: receipt={} bytes, token={} bytes, expires={}",
+                    receipt.length, token.length, tokenExpiresAt);
+
+            scittHeaderCache.put(CACHE_KEY, new CachedScittHeaders(headers, tokenExpiresAt));
+            return headers;
         }).exceptionally(e -> {
-            synchronized (scittHeadersLock) {
-                if (scittHeaders != null) {
-                    return scittHeaders;
-                }
-                LOGGER.warn("Could not fetch SCITT artifacts for agent {}: {}", agentId, e.getMessage());
-                scittHeaders = Map.of();
-                return scittHeaders;
-            }
+            lastFetchFailure.set(Instant.now());
+            LOGGER.warn("Could not fetch SCITT artifacts for agent {} "
+                            + "(cooldown {}s before retry): {}",
+                    agentId, FETCH_FAILURE_COOLDOWN.getSeconds(), e.getMessage());
+            return Map.of();
         });
+    }
+
+    /**
+     * Extracts the expiration time from raw status token bytes.
+     * Returns null if parsing fails (cache will use default TTL).
+     */
+    private static Instant extractTokenExpiry(byte[] tokenBytes) {
+        try {
+            StatusToken parsed = StatusToken.parse(tokenBytes);
+            return parsed.expiresAt();
+        } catch (ScittParseException e) {
+            LOGGER.debug("Could not parse token for expiry: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Computes the cache expiry in nanoseconds based on token lifetime.
+     * Uses 80% of remaining token lifetime, clamped between MIN and MAX TTL.
+     */
+    private static long computeExpiryNanos(CachedScittHeaders value) {
+        if (value.tokenExpiresAt() == null || value.tokenExpiresAt() == Instant.MAX) {
+            return MAX_CACHE_TTL.toNanos();
+        }
+        Duration remaining = Duration.between(Instant.now(), value.tokenExpiresAt());
+        if (remaining.isNegative() || remaining.isZero()) {
+            return 0; // Already expired
+        }
+        long refreshNanos = (long) (remaining.toNanos() * REFRESH_FRACTION);
+        return Math.max(MIN_CACHE_TTL.toNanos(), Math.min(refreshNanos, MAX_CACHE_TTL.toNanos()));
     }
 
     /**
@@ -284,31 +357,48 @@ public class AnsVerifiedClient implements AutoCloseable {
             // Fail-fast based on policy and SCITT result
             // This prevents accidental unverified connections
             boolean scittVerified = scittPreResult.expectation().isVerified();
-            boolean scittPresent = scittPreResult.isPresent();
 
-            if (policy.scittMode() == VerificationMode.REQUIRED && !scittVerified) {
-                // REQUIRED: must have valid SCITT - reject if missing OR if verification failed
-                String reason = scittPreResult.expectation().failureReason();
-                ScittVerificationException.FailureType failureType = mapToFailureType(
-                    scittPreResult.expectation().status());
-                throw new ScittVerificationException(
-                    "SCITT verification required but failed: " + reason, failureType);
-            }
+            assertScittResult(scittPreResult, scittVerified);
 
-            if (policy.scittMode() == VerificationMode.ADVISORY && scittPresent && !scittVerified) {
-                // ADVISORY: if headers ARE present but failed, reject (don't allow garbage headers)
-                // If headers are NOT present, allow fallback to badge
-                String reason = scittPreResult.expectation().failureReason();
-                ScittVerificationException.FailureType failureType = mapToFailureType(
-                    scittPreResult.expectation().status());
-                throw new ScittVerificationException(
-                    "SCITT headers present but verification failed: " + reason, failureType);
+            if (policy.hasScittVerification() && !scittVerified) {
+                if (policy.allowsScittFallbackToBadge() && !scittPreResult.isPresent()) {
+                    // Allow fallback - badge verification will happen in post-verify
+                    LOGGER.debug("SCITT headers not present, will fall back to badge verification");
+                } else {
+                    String reason = scittPreResult.expectation().failureReason();
+                    ScittVerificationException.FailureType failureType = mapToFailureType(
+                        scittPreResult.expectation().status());
+                    throw new ScittVerificationException(
+                        "SCITT verification required but failed: " + reason, failureType);
+                }
             }
 
             PreVerificationResult combinedResult = preResult.withScittResult(scittPreResult);
             LOGGER.debug("Pre-verification complete: {}", combinedResult);
-            return new AnsConnection(hostname, combinedResult, connectionVerifier, policy);
+            return new AnsConnection(hostname, combinedResult, connectionVerifier, policy,
+                new CapturedCertificateProvider() {
+                    @Override
+                    public X509Certificate[] getCapturedCertificates(String host) {
+                        return trustManager.getInstanceCapturedCertificates(host);
+                    }
+
+                    @Override
+                    public void clearCapturedCertificates(String host) {
+                        trustManager.clearInstanceCapturedCertificates(host);
+                    }
+                });
         });
+    }
+
+    private void assertScittResult(ScittPreVerifyResult scittPreResult, boolean scittVerified) {
+        // Reject invalid SCITT headers regardless of mode (prevents garbage header attacks)
+        if (policy.rejectsInvalidScittHeaders() && scittPreResult.isPresent() && !scittVerified) {
+            String reason = scittPreResult.expectation().failureReason();
+            ScittVerificationException.FailureType failureType = mapToFailureType(
+                scittPreResult.expectation().status());
+            throw new ScittVerificationException(
+                "SCITT headers present but verification failed: " + reason, failureType);
+        }
     }
 
     /**
@@ -320,9 +410,10 @@ public class AnsVerifiedClient implements AutoCloseable {
         LOGGER.debug("Sending async preflight request to {}", uri);
 
         // First get our SCITT headers (lazy fetch if needed), then send the request
-        return scittHeadersAsync().thenCompose(outgoingHeaders -> {
+        return fetchScittHeadersAsync().thenCompose(outgoingHeaders -> {
             HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
                 .uri(uri)
+                .timeout(Duration.ofSeconds(10))
                 .method("HEAD", HttpRequest.BodyPublishers.noBody());
             outgoingHeaders.forEach(requestBuilder::header);
 
@@ -360,7 +451,12 @@ public class AnsVerifiedClient implements AutoCloseable {
 
     @Override
     public void close() {
-        // TransparencyClient doesn't require explicit close
+        transparencyClient.close();
+        httpClient.executor().ifPresent(e -> {
+            if (e instanceof java.util.concurrent.ExecutorService es) {
+                es.shutdown();
+            }
+        });
         LOGGER.debug("AnsVerifiedClient closed");
     }
 
@@ -385,6 +481,7 @@ public class AnsVerifiedClient implements AutoCloseable {
         private VerificationPolicy policy = VerificationPolicy.SCITT_REQUIRED;
         private Duration connectTimeout = Duration.ofSeconds(30);
         private SSLContext sslContext;
+        private CertificateCapturingTrustManager trustManager;
         private DefaultConnectionVerifier connectionVerifier;
 
         /**
@@ -464,9 +561,12 @@ public class AnsVerifiedClient implements AutoCloseable {
          * @throws ClientConfigurationException if keystore loading or SSLContext creation fails
          */
         public AnsVerifiedClient build() {
-            // Create TransparencyClient if not provided
+            // TransparencyClient is required — caller must provide one with explicit baseUrl
             if (transparencyClient == null) {
-                transparencyClient = TransparencyClient.builder().build();
+                throw new IllegalStateException(
+                    "TransparencyClient is required. Use .transparencyClient("
+                    + "TransparencyClient.builder().baseUrl(...).build()) to specify "
+                    + "the transparency log environment.");
             }
 
             // Load keystore if path provided
@@ -482,46 +582,25 @@ public class AnsVerifiedClient implements AutoCloseable {
                 }
             }
 
-            // Create SSLContext
+            // Create SSLContext with instance-scoped trust manager
+            char[] passwordCopy = keyPassword != null ? keyPassword.clone() : null;
             try {
-                sslContext = AnsVerifiedSslContextFactory.create(keyStore, keyPassword);
+                AnsVerifiedSslContextFactory.SslContextResult result =
+                    AnsVerifiedSslContextFactory.createWithTrustManager(keyStore, passwordCopy);
+                sslContext = result.sslContext();
+                trustManager = result.trustManager();
             } catch (GeneralSecurityException e) {
                 throw new ClientConfigurationException("Failed to create SSLContext: " + e.getMessage(), e);
             } finally {
-                if (keyPassword != null) {
-                    Arrays.fill(keyPassword, '\0');
-                    keyPassword = null;
+                if (passwordCopy != null) {
+                    Arrays.fill(passwordCopy, '\0');
                 }
             }
 
-            // Build ConnectionVerifier based on policy
-            DefaultConnectionVerifier.Builder verifierBuilder = DefaultConnectionVerifier.builder();
-
-            // DANE verifier (if enabled)
-            if (policy.daneMode() != VerificationMode.DISABLED) {
-                DefaultDaneTlsaVerifier tlsaVerifier = new DefaultDaneTlsaVerifier(DaneConfig.defaults());
-                verifierBuilder.daneVerifier(new DaneVerifier(tlsaVerifier));
-                LOGGER.debug("DANE verification enabled with mode {}", policy.daneMode());
-            }
-
-            // Badge verifier (if enabled)
-            if (policy.badgeMode() != VerificationMode.DISABLED) {
-                CachingBadgeVerificationService badgeService = CachingBadgeVerificationService.create();
-                verifierBuilder.badgeVerifier(new BadgeVerifier(badgeService));
-                LOGGER.debug("Badge verification enabled with mode {}", policy.badgeMode());
-            }
-
-            // SCITT verifier (if enabled)
-            if (policy.scittMode() != VerificationMode.DISABLED) {
-                ScittVerifierAdapter scittVerifier = ScittVerifierAdapter.builder()
-                    .transparencyClient(transparencyClient)
-                    .build();
-                verifierBuilder.scittVerifier(scittVerifier);
-                LOGGER.debug("SCITT verification enabled with mode {}", policy.scittMode());
-                // Note: SCITT headers are fetched lazily on first call to scittHeaders()
-            }
-
-            connectionVerifier = verifierBuilder.build();
+            // Build ConnectionVerifier based on policy using shared factory
+            connectionVerifier = DefaultConnectionVerifier.fromPolicy(
+                policy, transparencyClient,
+                new DefaultDaneTlsaVerifier(DaneConfig.defaults()));
             return new AnsVerifiedClient(this);
         }
     }

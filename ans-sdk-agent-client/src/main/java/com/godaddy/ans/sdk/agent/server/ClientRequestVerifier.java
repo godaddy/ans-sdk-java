@@ -1,4 +1,4 @@
-package com.godaddy.ans.sdk.agent.verification;
+package com.godaddy.ans.sdk.agent.server;
 
 import com.godaddy.ans.sdk.agent.VerificationPolicy;
 
@@ -59,7 +59,8 @@ public interface ClientRequestVerifier {
      * the status token's identity certificate fingerprints.</p>
      *
      * @param clientCert the client's X.509 certificate from mTLS handshake
-     * @param requestHeaders the HTTP request headers (must include SCITT headers)
+     * @param requestHeaders the HTTP request headers (must include SCITT headers).
+     *        Header keys must be lowercase (e.g., {@code x-scitt-receipt}, {@code x-ans-status-token}).
      * @param policy the verification policy to apply
      * @return a future that completes with the verification result
      * @throws NullPointerException if any parameter is null
@@ -74,7 +75,7 @@ public interface ClientRequestVerifier {
      * Verifies an incoming client request using the default SCITT_REQUIRED policy.
      *
      * @param clientCert the client's X.509 certificate from mTLS handshake
-     * @param requestHeaders the HTTP request headers
+     * @param requestHeaders the HTTP request headers (keys must be lowercase)
      * @return a future that completes with the verification result
      * @throws NullPointerException if any parameter is null
      */

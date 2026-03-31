@@ -2,7 +2,10 @@ package com.godaddy.ans.sdk.agent.verification;
 
 import com.godaddy.ans.sdk.agent.VerificationMode;
 import com.godaddy.ans.sdk.agent.VerificationPolicy;
+import com.godaddy.ans.sdk.transparency.TransparencyClient;
 import com.godaddy.ans.sdk.transparency.scitt.ScittPreVerifyResult;
+import com.godaddy.ans.sdk.transparency.verification.CachingBadgeVerificationService;
+import com.godaddy.ans.sdk.transparency.verification.ServerVerifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -65,6 +68,74 @@ public class DefaultConnectionVerifier implements ConnectionVerifier {
      */
     public static Builder builder() {
         return new Builder();
+    }
+
+    /**
+     * Creates a DefaultConnectionVerifier from a verification policy.
+     *
+     * <p>Wires DANE, Badge, and SCITT verifiers based on which modes are enabled
+     * in the policy. This is the recommended way to construct a verifier when
+     * you don't need custom caching or service overrides.</p>
+     *
+     * @param policy the verification policy controlling which verifiers are enabled
+     * @param transparencyClient the transparency client for SCITT verification, or null
+     * @param daneVerifier the DANE TLSA verifier, or null to skip DANE regardless of policy
+     * @return a configured verifier
+     */
+    public static DefaultConnectionVerifier fromPolicy(
+            VerificationPolicy policy,
+            TransparencyClient transparencyClient,
+            DaneTlsaVerifier daneVerifier) {
+        return fromPolicy(policy, transparencyClient, daneVerifier, null);
+    }
+
+    /**
+     * Creates a DefaultConnectionVerifier from a verification policy with an optional
+     * badge service override.
+     *
+     * <p>Use the {@code badgeServiceOverride} parameter when you need to share a cached
+     * badge verification service across multiple verifier instances (e.g., in a factory
+     * that creates verifiers per-connection).</p>
+     *
+     * @param policy the verification policy controlling which verifiers are enabled
+     * @param transparencyClient the transparency client for SCITT verification, or null
+     * @param daneVerifier the DANE TLSA verifier, or null to skip DANE regardless of policy
+     * @param badgeServiceOverride optional pre-built badge service; if null, a new
+     *                             {@link CachingBadgeVerificationService} is created
+     * @return a configured verifier
+     */
+    public static DefaultConnectionVerifier fromPolicy(
+            VerificationPolicy policy,
+            TransparencyClient transparencyClient,
+            DaneTlsaVerifier daneVerifier,
+            ServerVerifier badgeServiceOverride) {
+        Builder builder = builder();
+
+        if (policy.daneMode() != VerificationMode.DISABLED && daneVerifier != null) {
+            builder.daneVerifier(new DaneVerifier(daneVerifier));
+        }
+
+        if (policy.badgeMode() != VerificationMode.DISABLED) {
+            ServerVerifier badgeService;
+            if (badgeServiceOverride != null) {
+                badgeService = badgeServiceOverride;
+            } else if (transparencyClient != null) {
+                badgeService = CachingBadgeVerificationService.create(transparencyClient);
+            } else {
+                throw new IllegalStateException(
+                    "Badge verification is enabled but no TransparencyClient or badge service "
+                    + "was provided. Supply a TransparencyClient with an explicit baseUrl.");
+            }
+            builder.badgeVerifier(new BadgeVerifier(badgeService));
+        }
+
+        if (policy.scittMode() != VerificationMode.DISABLED && transparencyClient != null) {
+            builder.scittVerifier(ScittVerifierAdapter.builder()
+                .transparencyClient(transparencyClient)
+                .build());
+        }
+
+        return builder.build();
     }
 
     @Override
@@ -226,42 +297,29 @@ public class DefaultConnectionVerifier implements ConnectionVerifier {
     /**
      * Determines the combine strategy based on results and policy.
      *
-     * <p><b>Fallback invariants:</b></p>
-     * <ul>
-     *   <li>SCITT-to-Badge fallback is ONLY allowed when:
-     *     <ol>
-     *       <li>SCITT mode is REQUIRED</li>
-     *       <li>Badge mode is ADVISORY (not REQUIRED or DISABLED)</li>
-     *       <li>SCITT result is NOT_FOUND (headers missing, not verification failure)</li>
-     *       <li>Badge verification succeeded</li>
-     *     </ol>
-     *   </li>
-     *   <li>This matches {@link VerificationPolicy#SCITT_ENHANCED} - the migration scenario
-     *       where SCITT is preferred but badge provides an audit trail fallback.</li>
-     *   <li>When badge is REQUIRED, both verifications must pass independently -
-     *       no fallback allowed.</li>
-     *   <li>When badge is DISABLED (e.g., {@link VerificationPolicy#SCITT_REQUIRED}),
-     *       fallback is impossible - SCITT NOT_FOUND becomes a hard failure.</li>
-     * </ul>
+     * <p>Uses {@link VerificationPolicy#allowsScittFallbackToBadge()} as the single source
+     * of truth for fallback policy. Runtime conditions (SCITT missing, badge succeeded)
+     * are checked only when the policy permits fallback.</p>
+     *
+     * @see VerificationPolicy#allowsScittFallbackToBadge()
      */
     private CombineStrategy determineCombineStrategy(List<VerificationResult> results,
                                                       VerificationPolicy policy) {
-        // Fallback only applies when SCITT is REQUIRED
-        if (policy.scittMode() != VerificationMode.REQUIRED) {
+        // Check policy-level fallback permission first
+        if (!policy.allowsScittFallbackToBadge()) {
             return CombineStrategy.STANDARD;
         }
 
+        // Policy allows fallback - check runtime conditions
         Optional<VerificationResult> scittResult = findResultByType(results,
             VerificationResult.VerificationType.SCITT);
         Optional<VerificationResult> badgeResult = findResultByType(results,
             VerificationResult.VerificationType.BADGE);
 
-        // Check fallback conditions
         boolean scittMissing = scittResult.map(VerificationResult::isNotFound).orElse(false);
         boolean badgeSucceeded = badgeResult.map(VerificationResult::isSuccess).orElse(false);
-        boolean badgeIsAdvisory = policy.badgeMode() == VerificationMode.ADVISORY;
 
-        if (scittMissing && badgeSucceeded && badgeIsAdvisory) {
+        if (scittMissing && badgeSucceeded) {
             LOGGER.info("SCITT headers not present, falling back to badge verification for audit trail");
             return CombineStrategy.SCITT_FALLBACK_TO_BADGE;
         }
@@ -288,8 +346,11 @@ public class DefaultConnectionVerifier implements ConnectionVerifier {
             }
 
             // Check explicit failures (MISMATCH, ERROR)
-            if (result.shouldFail() && mode == VerificationMode.REQUIRED) {
-                LOGGER.warn("Verification failed (REQUIRED): {}", result);
+            // FALLBACK_ALLOWED is strict for actual failures -- fallback only applies to NOT_FOUND
+            boolean isStrict = mode == VerificationMode.REQUIRED
+                || mode == VerificationMode.FALLBACK_ALLOWED;
+            if (result.shouldFail() && isStrict) {
+                LOGGER.warn("Verification failed ({}): {}", mode, result);
                 return result;
             } else if (result.shouldFail()) {
                 LOGGER.warn("Verification issue (ADVISORY): {}", result);

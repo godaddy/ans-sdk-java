@@ -8,6 +8,7 @@ import com.godaddy.ans.sdk.agent.VerificationPolicy;
 import com.godaddy.ans.sdk.agent.connection.AgentConnection;
 import com.godaddy.ans.sdk.agent.protocol.HttpApiClient;
 import com.godaddy.ans.sdk.agent.verification.VerificationResult;
+import com.godaddy.ans.sdk.transparency.TransparencyClient;
 
 import java.time.Duration;
 import java.util.Map;
@@ -138,6 +139,8 @@ public class HttpApiExample {
             // Connect with BADGE_REQUIRED policy
             ConnectOptions options = ConnectOptions.builder()
                 .verificationPolicy(VerificationPolicy.BADGE_REQUIRED)
+                .transparencyClient(TransparencyClient.builder()
+                    .baseUrl(TransparencyClient.OTE_BASE_URL).build())
                 .build();
 
             System.out.println("  Connecting with: " + options.getVerificationPolicy());
@@ -177,6 +180,8 @@ public class HttpApiExample {
             // Full policy: DANE + Badge
             ConnectOptions options = ConnectOptions.builder()
                 .verificationPolicy(VerificationPolicy.DANE_AND_BADGE)
+                .transparencyClient(TransparencyClient.builder()
+                    .baseUrl(TransparencyClient.OTE_BASE_URL).build())
                 .build();
 
             System.out.println("  Connecting with full verification policy:");
@@ -216,21 +221,21 @@ public class HttpApiExample {
         System.out.println("\nExample 4: SCITT Verification (Cryptographic Proof)");
         System.out.println("-".repeat(40));
 
-        try {
-            // Create AnsVerifiedClient with SCITT verification
-            // Note: TransparencyClient is created internally if not provided
-            AnsVerifiedClient client = AnsVerifiedClient.builder()
+        // Use try-with-resources to ensure proper cleanup on all paths
+        try (AnsVerifiedClient client = AnsVerifiedClient.builder()
                 .agentId(agentId)
+                .transparencyClient(TransparencyClient.builder()
+                    .baseUrl(TransparencyClient.OTE_BASE_URL).build())
                 .keyStorePath(keystorePath, keystorePassword)
                 .policy(VerificationPolicy.SCITT_REQUIRED)
                 .connectTimeout(Duration.ofSeconds(30))
-                .build();
+                .build()) {
 
             System.out.println("  Created AnsVerifiedClient with policy: " + client.policy());
 
             // Display SCITT headers that will be sent with requests
             // (blocking is fine during setup, not on I/O threads)
-            Map<String, String> scittHeaders = client.scittHeadersAsync().join();
+            Map<String, String> scittHeaders = client.fetchScittHeadersAsync().join();
             if (!scittHeaders.isEmpty()) {
                 System.out.println("  SCITT headers configured:");
                 scittHeaders.forEach((k, v) ->
@@ -242,32 +247,29 @@ public class HttpApiExample {
             System.out.println("\n  Connecting to " + serverUrl);
             System.out.println("  (Preflight request will exchange SCITT artifacts)");
 
-            AnsConnection connection = client.connect(serverUrl);
-            System.out.println("  Connected to: " + connection.hostname());
+            try (AnsConnection connection = client.connect(serverUrl)) {
+                System.out.println("  Connected to: " + connection.hostname());
 
-            // Check if server provided SCITT artifacts
-            if (connection.hasScittArtifacts()) {
-                System.out.println("  Server provided SCITT artifacts");
-            } else {
-                System.out.println("  Server did not provide SCITT artifacts");
+                // Check if server provided SCITT artifacts
+                if (connection.hasScittArtifacts()) {
+                    System.out.println("  Server provided SCITT artifacts");
+                } else {
+                    System.out.println("  Server did not provide SCITT artifacts");
+                }
+
+                // Perform full verification
+                VerificationResult result = connection.verifyServer();
+
+                System.out.println("\n  Verification Results:");
+                System.out.println("    Overall: " + result.status() + " (" + result.type() + ")");
+                System.out.println("    Reason: " + result.reason());
+
+                if (result.isSuccess()) {
+                    System.out.println("\n  [SUCCESS] SCITT verification completed");
+                } else {
+                    System.out.println("\n  [WARNING] Verification status: " + result.status());
+                }
             }
-
-            // Perform full verification
-            VerificationResult result = connection.verifyServer();
-
-            System.out.println("\n  Verification Results:");
-            System.out.println("    Overall: " + result.status() + " (" + result.type() + ")");
-            System.out.println("    Reason: " + result.reason());
-
-            if (result.isSuccess()) {
-                System.out.println("\n  [SUCCESS] SCITT verification completed");
-            } else {
-                System.out.println("\n  [WARNING] Verification status: " + result.status());
-            }
-
-            // Clean up
-            connection.close();
-            client.close();
             System.out.println();
 
         } catch (Exception e) {

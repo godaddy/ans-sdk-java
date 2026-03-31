@@ -42,7 +42,7 @@ ConnectionVerifier verifier = DefaultConnectionVerifier.builder()
         DaneConfig.builder().validationMode(DnssecValidationMode.VALIDATE_IN_CODE).build())))
     .badgeVerifier(new BadgeVerifier(
         BadgeVerificationService.builder()
-            .transparencyClient(TransparencyClient.builder().build())
+            .transparencyClient(TransparencyClient.createOte())
             .build()))
     .build();
 
@@ -90,6 +90,8 @@ The high-level approach using `AnsVerifiedClient` handles SCITT automatically:
 // 1. Create AnsVerifiedClient with SCITT policy
 try (AnsVerifiedClient ansClient = AnsVerifiedClient.builder()
         .agentId(agentId)
+        .transparencyClient(TransparencyClient.builder()
+            .baseUrl(TransparencyClient.OTE_BASE_URL).build())
         .keyStorePath(keystorePath, keystorePassword)
         .policy(VerificationPolicy.SCITT_REQUIRED)
         .build()) {

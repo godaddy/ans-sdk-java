@@ -18,6 +18,22 @@ public record CoseProtectedHeader(
     CwtClaims cwtClaims,
     String contentType
 ) {
+    /**
+     * Compact constructor that performs defensive copy of mutable byte array.
+     */
+    public CoseProtectedHeader {
+        keyId = keyId != null ? keyId.clone() : null;
+    }
+
+    /**
+     * Returns a defensive copy of the key ID.
+     *
+     * @return a copy of the key ID bytes, or null if not present
+     */
+    @Override
+    public byte[] keyId() {
+        return keyId != null ? keyId.clone() : null;
+    }
 
     /**
      * VDS type for RFC 9162 SHA-256 Merkle trees.

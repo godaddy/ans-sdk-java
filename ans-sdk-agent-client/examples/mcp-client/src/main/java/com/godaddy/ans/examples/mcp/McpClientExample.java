@@ -6,6 +6,7 @@ import com.godaddy.ans.sdk.agent.AnsConnection;
 import com.godaddy.ans.sdk.agent.AnsVerifiedClient;
 import com.godaddy.ans.sdk.agent.VerificationPolicy;
 import com.godaddy.ans.sdk.agent.verification.VerificationResult;
+import com.godaddy.ans.sdk.transparency.TransparencyClient;
 
 import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
@@ -36,10 +37,9 @@ import java.time.Duration;
  *
  * <h2>Environment Variables</h2>
  * <ul>
- *   <li>CLIENT_AGENT_ID - Agent ID for client's own SCITT artifacts</li>
- *   <li>CLIENT_KEYSTORE_PATH - Path to client PKCS12 keystore containing identity cert + key</li>
- *   <li>CLIENT_KEYSTORE_PASSWORD - Keystore password (default: changeit)</li>
- *   <li>VERIFICATION_POLICY - Policy: SCITT_REQUIRED (default), SCITT_ENHANCED, BADGE_REQUIRED, etc.</li>
+ *   <li>AGENT_ID - Agent ID for client's own SCITT artifacts</li>
+ *   <li>KEYSTORE_PATH - Path to client PKCS12 keystore containing identity cert + key</li>
+ *   <li>KEYSTORE_PASS - Keystore password (default: changeit)</li>
  * </ul>
  *
  * <h2>Creating a Client Keystore</h2>
@@ -76,12 +76,13 @@ public class McpClientExample {
         // Create ANS verified client - handles all verification setup based on policy
         try (AnsVerifiedClient ansClient = AnsVerifiedClient.builder()
                 .agentId(agentId)
+                .transparencyClient(TransparencyClient.builder().baseUrl(TransparencyClient.OTE_BASE_URL).build())
                 .keyStorePath(keystorePath, keystorePassword)
                 .policy(policy)
                 .build()) {
 
             // Fetch SCITT headers early (blocking is fine during setup)
-            var scittHeaders = ansClient.scittHeadersAsync().join();
+            var scittHeaders = ansClient.fetchScittHeadersAsync().join();
 
             // Connect and run all pre-verifications (DANE, Badge, SCITT based on policy)
             try (AnsConnection connection = ansClient.connect(serverUrl)) {

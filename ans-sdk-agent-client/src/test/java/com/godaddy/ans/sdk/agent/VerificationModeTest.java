@@ -14,7 +14,7 @@ class VerificationModeTest {
 
     @Test
     void enumHasThreeValues() {
-        assertEquals(3, VerificationMode.values().length);
+        assertEquals(4, VerificationMode.values().length);
     }
 
     @Test
@@ -32,6 +32,11 @@ class VerificationModeTest {
         assertEquals(VerificationMode.REQUIRED, VerificationMode.valueOf("REQUIRED"));
     }
 
+    @Test
+    void fallbackExists() {
+        assertEquals(VerificationMode.FALLBACK_ALLOWED, VerificationMode.valueOf("FALLBACK_ALLOWED"));
+    }
+
     @ParameterizedTest
     @EnumSource(VerificationMode.class)
     void allValuesAreNotNull(VerificationMode mode) {
@@ -44,5 +49,6 @@ class VerificationModeTest {
         assertEquals(0, VerificationMode.DISABLED.ordinal());
         assertEquals(1, VerificationMode.ADVISORY.ordinal());
         assertEquals(2, VerificationMode.REQUIRED.ordinal());
+        assertEquals(3, VerificationMode.FALLBACK_ALLOWED.ordinal());
     }
 }

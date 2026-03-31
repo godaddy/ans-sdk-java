@@ -10,7 +10,7 @@ server:
   port: 8443
   ssl:
     enabled: true
-    enabled-protocols: TLSv1.2
+    enabled-protocols: TLSv1.2,TLSv1.3
     # Path to the keystore containing the server certificate and private key
     key-store: ${SSL_KEYSTORE_PATH}
     key-store-password: ${SSL_KEYSTORE_PASSWORD}
@@ -29,7 +29,7 @@ server:
 ans:
   mcp:
     # Agent UUID for SCITT artifact fetching (required)
-    agent-id: ${ANS_AGENT_ID:e3cf3df4-092e-497d-80f3-55ad0e38588a}
+    agent-id: ${ANS_AGENT_ID}
 
     # Server identification for MCP protocol
     server-info:

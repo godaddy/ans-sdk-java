@@ -1,11 +1,10 @@
 package com.godaddy.ans.sdk.agent;
 
-import com.godaddy.ans.sdk.agent.http.CertificateCapturingTrustManager;
+import com.godaddy.ans.sdk.agent.http.CapturedCertificateProvider;
 import com.godaddy.ans.sdk.agent.verification.DefaultConnectionVerifier;
 import com.godaddy.ans.sdk.agent.verification.PreVerificationResult;
 import com.godaddy.ans.sdk.agent.verification.VerificationResult;
 import com.godaddy.ans.sdk.agent.verification.VerificationResult.VerificationType;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -36,19 +35,17 @@ class AnsConnectionTest {
     @Mock
     private DefaultConnectionVerifier mockVerifier;
 
+    @Mock
+    private CapturedCertificateProvider mockCertProvider;
+
     private VerificationPolicy policy = VerificationPolicy.SCITT_REQUIRED;
 
     private AnsConnection connection;
 
     @BeforeEach
     void setUp() {
-        connection = new AnsConnection(TEST_HOSTNAME, mockPreResult, mockVerifier, policy);
-    }
-
-    @AfterEach
-    void tearDown() {
-        // Clean up any captured certificates
-        CertificateCapturingTrustManager.clearCapturedCertificates(TEST_HOSTNAME);
+        connection = new AnsConnection(TEST_HOSTNAME, mockPreResult, mockVerifier, policy,
+            mockCertProvider);
     }
 
     @Nested
@@ -138,7 +135,7 @@ class AnsConnectionTest {
         @Test
         @DisplayName("Should throw SecurityException when no certificates captured")
         void shouldThrowWhenNoCertificates() {
-            // No certificates captured for this hostname
+            when(mockCertProvider.getCapturedCertificates(TEST_HOSTNAME)).thenReturn(null);
 
             assertThatThrownBy(() -> connection.verifyServer())
                 .isInstanceOf(SecurityException.class)
@@ -173,6 +170,8 @@ class AnsConnectionTest {
         @Test
         @DisplayName("Should throw SecurityException when no certificates captured")
         void shouldThrowWhenNoCertificates() {
+            when(mockCertProvider.getCapturedCertificates(TEST_HOSTNAME)).thenReturn(null);
+
             assertThatThrownBy(() -> connection.verifyServerDetailed())
                 .isInstanceOf(SecurityException.class)
                 .hasMessageContaining("No server certificate captured");
@@ -201,14 +200,11 @@ class AnsConnectionTest {
     class CloseTests {
 
         @Test
-        @DisplayName("Should clear captured certificates on close")
+        @DisplayName("Should clear captured certificates on close via provider")
         void shouldClearCapturedCertificatesOnClose() {
-            // The close method clears captured certs - verify it doesn't throw
             connection.close();
 
-            // Verify that getting certificates returns null/empty after close
-            X509Certificate[] certs = CertificateCapturingTrustManager.getCapturedCertificates(TEST_HOSTNAME);
-            assertThat(certs).isNull();
+            verify(mockCertProvider).clearCapturedCertificates(TEST_HOSTNAME);
         }
     }
 
@@ -225,14 +221,14 @@ class AnsConnectionTest {
             when(mockVerifier.postVerify(any(), any(), any())).thenReturn(List.of(successResult));
             when(mockVerifier.combine(any(), any())).thenReturn(successResult);
 
-            try (AnsConnection conn = new AnsConnection(TEST_HOSTNAME, mockPreResult, mockVerifier, policy)) {
+            try (AnsConnection conn = new AnsConnection(TEST_HOSTNAME, mockPreResult, mockVerifier, policy,
+                mockCertProvider)) {
                 VerificationResult result = conn.verifyServer(cert);
                 assertThat(result.isSuccess()).isTrue();
             }
 
-            // After close, captured certs should be cleared
-            X509Certificate[] certs = CertificateCapturingTrustManager.getCapturedCertificates(TEST_HOSTNAME);
-            assertThat(certs).isNull();
+            // After close, clearCapturedCertificates should have been called
+            verify(mockCertProvider).clearCapturedCertificates(TEST_HOSTNAME);
         }
     }
 }

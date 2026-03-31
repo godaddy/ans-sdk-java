@@ -3,7 +3,7 @@ package com.godaddy.ans.sdk.transparency.scitt;
 /**
  * Exception thrown when parsing SCITT artifacts (receipts, status tokens) fails.
  */
-public class ScittParseException extends Exception {
+public final class ScittParseException extends Exception {
 
     /**
      * Creates a new parse exception with the specified message.

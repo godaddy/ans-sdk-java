@@ -104,6 +104,13 @@ public class McpServerProperties {
          */
         private String policy = "SCITT_REQUIRED";
 
+        /**
+         * Timeout in seconds for client verification.
+         * Should be at least as long as the transparency service read timeout (30s)
+         * to avoid timeouts on cold-start root key fetches.
+         */
+        private long timeoutSeconds = 30;
+
         public boolean isEnabled() {
             return enabled;
         }
@@ -118,6 +125,14 @@ public class McpServerProperties {
 
         public void setPolicy(String policy) {
             this.policy = policy;
+        }
+
+        public long getTimeoutSeconds() {
+            return timeoutSeconds;
+        }
+
+        public void setTimeoutSeconds(long timeoutSeconds) {
+            this.timeoutSeconds = timeoutSeconds;
         }
 
         /**

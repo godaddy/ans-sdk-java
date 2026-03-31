@@ -23,13 +23,12 @@ class ScittExpectationTest {
             Map<String, String> metadataHashes = Map.of("a2a", "SHA256:metadata1");
 
             ScittExpectation expectation = ScittExpectation.verified(
-                serverCerts, identityCerts, "agent.example.com", "ans://test",
+                serverCerts, identityCerts, "ans://test",
                 metadataHashes, null);
 
             assertThat(expectation.status()).isEqualTo(ScittExpectation.Status.VERIFIED);
             assertThat(expectation.validServerCertFingerprints()).containsExactlyElementsOf(serverCerts);
             assertThat(expectation.validIdentityCertFingerprints()).containsExactlyElementsOf(identityCerts);
-            assertThat(expectation.agentHost()).isEqualTo("agent.example.com");
             assertThat(expectation.ansName()).isEqualTo("ans://test");
             assertThat(expectation.metadataHashes()).isEqualTo(metadataHashes);
             assertThat(expectation.failureReason()).isNull();
@@ -128,7 +127,7 @@ class ScittExpectationTest {
         @Test
         @DisplayName("shouldFail() should return correct values for each status")
         void shouldFailShouldReturnCorrectValues() {
-            assertThat(ScittExpectation.verified(List.of(), List.of(), null, null, null, null)
+            assertThat(ScittExpectation.verified(List.of(), List.of(), null, null, null)
                 .shouldFail()).isFalse();
             assertThat(ScittExpectation.notPresent().shouldFail()).isFalse();
 
@@ -144,7 +143,7 @@ class ScittExpectationTest {
         @Test
         @DisplayName("isVerified() should only return true for VERIFIED status")
         void isVerifiedShouldOnlyBeTrueForVerifiedStatus() {
-            assertThat(ScittExpectation.verified(List.of(), List.of(), null, null, null, null)
+            assertThat(ScittExpectation.verified(List.of(), List.of(), null, null, null)
                 .isVerified()).isTrue();
 
             assertThat(ScittExpectation.notPresent().isVerified()).isFalse();
@@ -157,7 +156,7 @@ class ScittExpectationTest {
         void isNotPresentShouldOnlyBeTrueForNotPresentStatus() {
             assertThat(ScittExpectation.notPresent().isNotPresent()).isTrue();
 
-            assertThat(ScittExpectation.verified(List.of(), List.of(), null, null, null, null)
+            assertThat(ScittExpectation.verified(List.of(), List.of(), null, null, null)
                 .isNotPresent()).isFalse();
             assertThat(ScittExpectation.invalidReceipt("").isNotPresent()).isFalse();
         }
@@ -174,7 +173,7 @@ class ScittExpectationTest {
             mutableList.add("cert1");
 
             ScittExpectation expectation = ScittExpectation.verified(
-                mutableList, List.of(), null, null, null, null);
+                mutableList, List.of(), null, null, null);
 
             mutableList.add("cert2");
 
@@ -188,7 +187,7 @@ class ScittExpectationTest {
             mutableMap.put("key1", "value1");
 
             ScittExpectation expectation = ScittExpectation.verified(
-                List.of(), List.of(), null, null, mutableMap, null);
+                List.of(), List.of(), null, mutableMap, null);
 
             mutableMap.put("key2", "value2");
 

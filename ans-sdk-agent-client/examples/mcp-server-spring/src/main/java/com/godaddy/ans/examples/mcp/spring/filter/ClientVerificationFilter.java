@@ -3,8 +3,8 @@ package com.godaddy.ans.examples.mcp.spring.filter;
 import com.godaddy.ans.examples.mcp.spring.config.McpServerProperties;
 import com.godaddy.ans.sdk.agent.VerificationMode;
 import com.godaddy.ans.sdk.agent.VerificationPolicy;
-import com.godaddy.ans.sdk.agent.verification.ClientRequestVerificationResult;
-import com.godaddy.ans.sdk.agent.verification.DefaultClientRequestVerifier;
+import com.godaddy.ans.sdk.agent.server.ClientRequestVerificationResult;
+import com.godaddy.ans.sdk.agent.server.DefaultClientRequestVerifier;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -51,8 +51,6 @@ import java.util.concurrent.TimeUnit;
 public class ClientVerificationFilter extends OncePerRequestFilter {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(ClientVerificationFilter.class);
-    private static final long VERIFICATION_TIMEOUT_SECONDS = 5;
-
     /**
      * Request attribute key for the verified agent ID.
      */
@@ -66,6 +64,7 @@ public class ClientVerificationFilter extends OncePerRequestFilter {
     private final DefaultClientRequestVerifier verifier;
     private final boolean verificationEnabled;
     private final VerificationPolicy policy;
+    private final long verificationTimeoutSeconds;
 
     public ClientVerificationFilter(
             DefaultClientRequestVerifier verifier,
@@ -73,6 +72,7 @@ public class ClientVerificationFilter extends OncePerRequestFilter {
         this.verifier = verifier;
         this.verificationEnabled = properties.getVerification().isEnabled();
         this.policy = properties.getVerification().getVerificationPolicy();
+        this.verificationTimeoutSeconds = properties.getVerification().getTimeoutSeconds();
     }
 
     @Override
@@ -114,7 +114,7 @@ public class ClientVerificationFilter extends OncePerRequestFilter {
             // Verify using SDK (handles caching, fingerprint matching internally)
             ClientRequestVerificationResult result = verifier
                     .verify(clientCert, headers, policy)
-                    .get(VERIFICATION_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                    .get(verificationTimeoutSeconds, TimeUnit.SECONDS);
 
             // Store result for downstream use
             request.setAttribute(VERIFICATION_RESULT_ATTR, result);
@@ -164,7 +164,7 @@ public class ClientVerificationFilter extends OncePerRequestFilter {
         while (headerNames.hasMoreElements()) {
             String name = headerNames.nextElement();
             String value = request.getHeader(name);
-            headers.put(name, value);
+            headers.put(name.toLowerCase(java.util.Locale.ROOT), value);
         }
 
         return headers;

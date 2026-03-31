@@ -204,40 +204,22 @@ public final class CoseSign1Parser {
         return new CwtClaims(iss, sub, aud, exp, nbf, iat);
     }
 
-    private static byte[] extractByteString(CBORObject array, int index, String name) throws ScittParseException {
-        CBORObject element = array.get(index);
-        if (element == null || element.getType() != CBORType.ByteString) {
-            throw new ScittParseException(name + " must be a byte string");
-        }
-        return element.GetByteString();
+    private static byte[] extractByteString(CBORObject array, int index, String name)
+            throws ScittParseException {
+        return CborExtractors.extractByteString(array, index, name);
     }
 
     private static byte[] extractOptionalByteString(CBORObject array, int index, String name)
             throws ScittParseException {
-        CBORObject element = array.get(index);
-        if (element == null || element.isNull()) {
-            return null;  // Detached payload
-        }
-        if (element.getType() != CBORType.ByteString) {
-            throw new ScittParseException(name + " must be a byte string or null");
-        }
-        return element.GetByteString();
+        return CborExtractors.extractOptionalByteString(array, index, name);
     }
 
     private static Long extractOptionalLong(CBORObject map, int label) {
-        CBORObject value = map.get(CBORObject.FromObject(label));
-        if (value != null && value.isNumber()) {
-            return value.AsInt64();
-        }
-        return null;
+        return CborExtractors.extractOptionalLong(map, label);
     }
 
     private static String extractOptionalString(CBORObject map, int label) {
-        CBORObject value = map.get(CBORObject.FromObject(label));
-        if (value != null && value.getType() == CBORType.TextString) {
-            return value.AsString();
-        }
-        return null;
+        return CborExtractors.extractOptionalString(map, label);
     }
 
     /**
@@ -282,5 +264,44 @@ public final class CoseSign1Parser {
         CBORObject unprotectedHeader,
         byte[] payload,
         byte[] signature
-    ) {}
+    ) {
+        /**
+         * Compact constructor that performs defensive copies of mutable byte arrays.
+         */
+        public ParsedCoseSign1 {
+            protectedHeaderBytes = protectedHeaderBytes != null ? protectedHeaderBytes.clone() : null;
+            payload = payload != null ? payload.clone() : null;
+            signature = signature != null ? signature.clone() : null;
+        }
+
+        /**
+         * Returns a defensive copy of the protected header bytes.
+         *
+         * @return a copy of the protected header bytes
+         */
+        @Override
+        public byte[] protectedHeaderBytes() {
+            return protectedHeaderBytes != null ? protectedHeaderBytes.clone() : null;
+        }
+
+        /**
+         * Returns a defensive copy of the payload.
+         *
+         * @return a copy of the payload bytes, or null if detached
+         */
+        @Override
+        public byte[] payload() {
+            return payload != null ? payload.clone() : null;
+        }
+
+        /**
+         * Returns a defensive copy of the signature.
+         *
+         * @return a copy of the signature bytes
+         */
+        @Override
+        public byte[] signature() {
+            return signature != null ? signature.clone() : null;
+        }
+    }
 }

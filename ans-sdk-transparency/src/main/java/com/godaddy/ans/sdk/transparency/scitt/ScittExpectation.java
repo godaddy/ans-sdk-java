@@ -39,7 +39,6 @@ public final class ScittExpectation {
     private final Status status;
     private final List<String> validServerCertFingerprints;
     private final List<String> validIdentityCertFingerprints;
-    private final String agentHost;
     private final String ansName;
     private final Map<String, String> metadataHashes;
     private final String failureReason;
@@ -49,7 +48,6 @@ public final class ScittExpectation {
             Status status,
             List<String> validServerCertFingerprints,
             List<String> validIdentityCertFingerprints,
-            String agentHost,
             String ansName,
             Map<String, String> metadataHashes,
             String failureReason,
@@ -59,7 +57,6 @@ public final class ScittExpectation {
             ? List.copyOf(validServerCertFingerprints) : List.of();
         this.validIdentityCertFingerprints = validIdentityCertFingerprints != null
             ? List.copyOf(validIdentityCertFingerprints) : List.of();
-        this.agentHost = agentHost;
         this.ansName = ansName;
         this.metadataHashes = metadataHashes != null ? Map.copyOf(metadataHashes) : Map.of();
         this.failureReason = failureReason;
@@ -71,18 +68,16 @@ public final class ScittExpectation {
     /**
      * Creates a verified expectation with all valid data.
      *
-     * @param serverCertFingerprints valid server certificate fingerprints
+     * @param serverCertFingerprints   valid server certificate fingerprints
      * @param identityCertFingerprints valid identity certificate fingerprints
-     * @param agentHost the agent's host
-     * @param ansName the agent's ANS name
-     * @param metadataHashes the metadata hashes
-     * @param statusToken the verified status token
+     * @param ansName                  the agent's ANS name
+     * @param metadataHashes           the metadata hashes
+     * @param statusToken              the verified status token
      * @return verified expectation
      */
     public static ScittExpectation verified(
             List<String> serverCertFingerprints,
             List<String> identityCertFingerprints,
-            String agentHost,
             String ansName,
             Map<String, String> metadataHashes,
             StatusToken statusToken) {
@@ -90,7 +85,6 @@ public final class ScittExpectation {
             Status.VERIFIED,
             serverCertFingerprints,
             identityCertFingerprints,
-            agentHost,
             ansName,
             metadataHashes,
             null,
@@ -107,9 +101,8 @@ public final class ScittExpectation {
     public static ScittExpectation invalidReceipt(String reason) {
         return new ScittExpectation(
             Status.INVALID_RECEIPT,
-            null, null, null, null, null,
-            reason,
-            null
+            null, null, null, null,
+                reason, null
         );
     }
 
@@ -122,9 +115,8 @@ public final class ScittExpectation {
     public static ScittExpectation invalidToken(String reason) {
         return new ScittExpectation(
             Status.INVALID_TOKEN,
-            null, null, null, null, null,
-            reason,
-            null
+            null, null, null, null,
+                reason, null
         );
     }
 
@@ -136,7 +128,7 @@ public final class ScittExpectation {
     public static ScittExpectation expired() {
         return new ScittExpectation(
             Status.TOKEN_EXPIRED,
-            null, null, null, null, null,
+            null, null, null, null,
             "Status token has expired",
             null
         );
@@ -151,7 +143,7 @@ public final class ScittExpectation {
     public static ScittExpectation revoked(String ansName) {
         return new ScittExpectation(
             Status.AGENT_REVOKED,
-            null, null, null, ansName, null,
+            null, null, ansName, null,
             "Agent registration has been revoked",
             null
         );
@@ -167,7 +159,7 @@ public final class ScittExpectation {
     public static ScittExpectation inactive(StatusToken.Status status, String ansName) {
         return new ScittExpectation(
             Status.AGENT_INACTIVE,
-            null, null, null, ansName, null,
+            null, null, ansName, null,
             "Agent status is " + status,
             null
         );
@@ -182,9 +174,8 @@ public final class ScittExpectation {
     public static ScittExpectation keyNotFound(String reason) {
         return new ScittExpectation(
             Status.KEY_NOT_FOUND,
-            null, null, null, null, null,
-            reason,
-            null
+            null, null, null, null, reason,
+                null
         );
     }
 
@@ -196,7 +187,7 @@ public final class ScittExpectation {
     public static ScittExpectation notPresent() {
         return new ScittExpectation(
             Status.NOT_PRESENT,
-            null, null, null, null, null,
+            null, null, null, null,
             "SCITT headers not present in response",
             null
         );
@@ -211,7 +202,7 @@ public final class ScittExpectation {
     public static ScittExpectation parseError(String reason) {
         return new ScittExpectation(
             Status.PARSE_ERROR,
-            null, null, null, null, null,
+            null, null, null, null,
             reason,
             null
         );
@@ -229,10 +220,6 @@ public final class ScittExpectation {
 
     public List<String> validIdentityCertFingerprints() {
         return validIdentityCertFingerprints;
-    }
-
-    public String agentHost() {
-        return agentHost;
     }
 
     public String ansName() {
@@ -261,7 +248,7 @@ public final class ScittExpectation {
     }
 
     /**
-     * Returns true if SCITT satus NOT_FOUND.
+     * Returns true if SCITT status NOT_FOUND.
      *
      * @return true if verified
      */

@@ -1,5 +1,7 @@
 package com.godaddy.ans.sdk.agent.verification;
 
+import com.godaddy.ans.sdk.crypto.CertificateUtils;
+
 /**
  * Result of a verification operation (DANE or Badge).
  *
@@ -82,7 +84,7 @@ public record VerificationResult(
      */
     public static VerificationResult mismatch(VerificationType type, String actual, String expected) {
         String reason = String.format("Certificate fingerprint mismatch: expected %s, got %s",
-            truncateFingerprint(expected), truncateFingerprint(actual));
+            CertificateUtils.truncateFingerprint(expected), CertificateUtils.truncateFingerprint(actual));
         return new VerificationResult(Status.MISMATCH, type, reason, actual, expected);
     }
 
@@ -159,13 +161,6 @@ public record VerificationResult(
      */
     public boolean isNotFound() {
         return status == Status.NOT_FOUND;
-    }
-
-    private static String truncateFingerprint(String fingerprint) {
-        if (fingerprint == null || fingerprint.length() <= 16) {
-            return fingerprint;
-        }
-        return fingerprint.substring(0, 16) + "...";
     }
 
     @Override

@@ -13,6 +13,8 @@ import org.bouncycastle.openssl.jcajce.JcaPEMWriter;
 import java.io.IOException;
 import java.io.StringReader;
 import java.io.StringWriter;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.security.Security;
 import java.security.cert.CertificateEncodingException;
 import java.security.cert.CertificateException;
@@ -21,7 +23,9 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Date;
+import java.util.HexFormat;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -235,10 +239,25 @@ public final class CertificateUtils {
         // Normalize: remove prefix, lowercase
         String normalizedActual = normalizeFingerprint(actual);
         String normalizedExpected = normalizeFingerprint(expected);
-        return normalizedActual.equals(normalizedExpected);
+        return MessageDigest.isEqual(
+            normalizedActual.getBytes(StandardCharsets.UTF_8),
+            normalizedExpected.getBytes(StandardCharsets.UTF_8));
     }
 
+    /**
+     * Normalizes a certificate fingerprint for comparison.
+     *
+     * <p>Normalization includes: lowercase conversion, removing common prefixes
+     * (sha256:, sha-256:), and stripping colons and spaces.</p>
+     *
+     * @param fingerprint the fingerprint to normalize
+     * @return the normalized fingerprint
+     * @throws IllegalArgumentException if fingerprint is null
+     */
     public static String normalizeFingerprint(String fingerprint) {
+        if (fingerprint == null) {
+            throw new IllegalArgumentException("fingerprint cannot be null");
+        }
         String normalized = fingerprint.toLowerCase().trim();
         // Remove common prefixes
         if (normalized.startsWith("sha256:")) {
@@ -248,6 +267,70 @@ public final class CertificateUtils {
         }
         // Remove colons and spaces
         return normalized.replace(":", "").replace(" ", "");
+    }
+
+    /**
+     * Converts a byte array to a lowercase hexadecimal string.
+     *
+     * @param bytes the byte array to convert
+     * @return the hex string (lowercase)
+     * @throws NullPointerException if bytes is null
+     */
+    public static String bytesToHex(byte[] bytes) {
+        Objects.requireNonNull(bytes, "bytes cannot be null");
+        return HexFormat.of().formatHex(bytes);
+    }
+
+    /**
+     * Converts a hexadecimal string to a byte array.
+     *
+     * @param hex the hex string (must have even length)
+     * @return the byte array
+     * @throws NullPointerException if hex is null
+     * @throws IllegalArgumentException if hex has odd length or invalid characters
+     */
+    public static byte[] hexToBytes(String hex) {
+        Objects.requireNonNull(hex, "hex cannot be null");
+        if (hex.length() % 2 != 0) {
+            throw new IllegalArgumentException("Hex string must have even length");
+        }
+        return HexFormat.of().parseHex(hex);
+    }
+
+    /**
+     * Truncates a fingerprint string for display in log messages.
+     *
+     * <p>Returns the first 16 characters followed by "..." for long fingerprints,
+     * or the full string if 16 characters or shorter.</p>
+     *
+     * @param fingerprint the fingerprint to truncate (may be null)
+     * @return the truncated fingerprint, or null if input is null
+     */
+    public static String truncateFingerprint(String fingerprint) {
+        if (fingerprint == null || fingerprint.length() <= 16) {
+            return fingerprint;
+        }
+        return fingerprint.substring(0, 16) + "...";
+    }
+
+    /**
+     * Truncates a list of fingerprints for display in log messages.
+     *
+     * <p>For lists of 2 or fewer, truncates each fingerprint individually.
+     * For longer lists, shows only the first fingerprint and the total count.</p>
+     *
+     * @param fingerprints the fingerprints to truncate
+     * @return a truncated string representation
+     */
+    public static String truncateFingerprints(List<String> fingerprints) {
+        if (fingerprints.size() <= 2) {
+            return fingerprints.stream()
+                .map(CertificateUtils::truncateFingerprint)
+                .toList()
+                .toString();
+        }
+        return "[" + truncateFingerprint(fingerprints.get(0))
+            + ", ... (" + fingerprints.size() + " total)]";
     }
 
     /**

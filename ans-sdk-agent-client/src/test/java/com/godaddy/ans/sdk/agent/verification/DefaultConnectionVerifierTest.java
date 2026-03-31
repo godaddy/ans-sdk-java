@@ -2,13 +2,14 @@ package com.godaddy.ans.sdk.agent.verification;
 
 import com.godaddy.ans.sdk.agent.VerificationMode;
 import com.godaddy.ans.sdk.agent.VerificationPolicy;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-
+import com.godaddy.ans.sdk.transparency.TransparencyClient;
 import com.godaddy.ans.sdk.transparency.scitt.ScittExpectation;
 import com.godaddy.ans.sdk.transparency.scitt.ScittPreVerifyResult;
 import com.godaddy.ans.sdk.transparency.scitt.ScittReceipt;
 import com.godaddy.ans.sdk.transparency.scitt.StatusToken;
+import com.godaddy.ans.sdk.transparency.verification.ServerVerifier;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 import java.security.cert.X509Certificate;
 import java.util.List;
@@ -16,6 +17,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -369,7 +371,7 @@ class DefaultConnectionVerifierTest {
     @Test
     void scittPreVerifyDelegatesToScittVerifier() throws ExecutionException, InterruptedException {
         ScittExpectation expectation = ScittExpectation.verified(
-            List.of("fp123"), List.of(), "host", "test.ans", Map.of(), null);
+            List.of("fp123"), List.of(), "test.ans", Map.of(), null);
         ScittPreVerifyResult expectedResult = ScittPreVerifyResult.verified(
             expectation, mock(ScittReceipt.class), mock(StatusToken.class));
 
@@ -394,7 +396,7 @@ class DefaultConnectionVerifierTest {
             .build();
 
         ScittExpectation expectation = ScittExpectation.verified(
-            List.of("scitt-fp"), List.of(), "host", "test.ans", Map.of(), null);
+            List.of("scitt-fp"), List.of(), "test.ans", Map.of(), null);
         ScittPreVerifyResult scittResult = ScittPreVerifyResult.verified(
             expectation, mock(ScittReceipt.class), mock(StatusToken.class));
 
@@ -420,7 +422,7 @@ class DefaultConnectionVerifierTest {
             .build();
 
         ScittExpectation expectation = ScittExpectation.verified(
-            List.of("fp123"), List.of(), "host", "test.ans", Map.of(), null);
+            List.of("fp123"), List.of(), "test.ans", Map.of(), null);
         ScittPreVerifyResult scittPreResult = ScittPreVerifyResult.verified(
             expectation, mock(ScittReceipt.class), mock(StatusToken.class));
 
@@ -469,8 +471,8 @@ class DefaultConnectionVerifierTest {
         DefaultConnectionVerifier verifier = DefaultConnectionVerifier.builder().build();
 
         VerificationPolicy scittWithBadgeFallback = VerificationPolicy.custom()
-            .scitt(VerificationMode.REQUIRED)
-            .badge(VerificationMode.ADVISORY)
+            .scitt(VerificationMode.FALLBACK_ALLOWED)
+            .badge(VerificationMode.REQUIRED)
             .build();
 
         List<VerificationResult> results = List.of(
@@ -531,5 +533,163 @@ class DefaultConnectionVerifierTest {
 
         assertTrue(combined.shouldFail());
         assertEquals(VerificationResult.Status.MISMATCH, combined.status());
+    }
+
+    @Test
+    void combineWithFallbackAllowedScittMismatchReturnsFailure() {
+        // FALLBACK_ALLOWED should still fail on MISMATCH -- fallback only applies to NOT_FOUND
+        DefaultConnectionVerifier verifier = DefaultConnectionVerifier.builder().build();
+
+        VerificationPolicy fallbackPolicy = VerificationPolicy.custom()
+            .scitt(VerificationMode.FALLBACK_ALLOWED)
+            .badge(VerificationMode.REQUIRED)
+            .build();
+
+        List<VerificationResult> results = List.of(
+            VerificationResult.mismatch(VerificationResult.VerificationType.SCITT, "actual", "expected"),
+            VerificationResult.success(VerificationResult.VerificationType.BADGE, "badge-fp"));
+
+        VerificationResult combined = verifier.combine(results, fallbackPolicy);
+
+        assertTrue(combined.shouldFail(),
+            "FALLBACK_ALLOWED should still fail on fingerprint MISMATCH");
+        assertEquals(VerificationResult.Status.MISMATCH, combined.status());
+    }
+
+    @Test
+    void combineWithFallbackAllowedScittErrorReturnsFailure() {
+        // FALLBACK_ALLOWED should still fail on ERROR -- fallback only applies to NOT_FOUND
+        DefaultConnectionVerifier verifier = DefaultConnectionVerifier.builder().build();
+
+        VerificationPolicy fallbackPolicy = VerificationPolicy.custom()
+            .scitt(VerificationMode.FALLBACK_ALLOWED)
+            .badge(VerificationMode.REQUIRED)
+            .build();
+
+        List<VerificationResult> results = List.of(
+            VerificationResult.error(VerificationResult.VerificationType.SCITT, "verification error"),
+            VerificationResult.success(VerificationResult.VerificationType.BADGE, "badge-fp"));
+
+        VerificationResult combined = verifier.combine(results, fallbackPolicy);
+
+        assertTrue(combined.shouldFail(),
+            "FALLBACK_ALLOWED should still fail on verification ERROR");
+        assertEquals(VerificationResult.Status.ERROR, combined.status());
+    }
+
+    @Test
+    void combineWithFallbackAllowedScittNotFoundStillFallsBack() {
+        // Regression guard: FALLBACK_ALLOWED + NOT_FOUND should still fall back to badge
+        DefaultConnectionVerifier verifier = DefaultConnectionVerifier.builder().build();
+
+        VerificationPolicy fallbackPolicy = VerificationPolicy.custom()
+            .scitt(VerificationMode.FALLBACK_ALLOWED)
+            .badge(VerificationMode.REQUIRED)
+            .build();
+
+        List<VerificationResult> results = List.of(
+            VerificationResult.notFound(VerificationResult.VerificationType.SCITT, "No headers"),
+            VerificationResult.success(VerificationResult.VerificationType.BADGE, "badge-fp"));
+
+        VerificationResult combined = verifier.combine(results, fallbackPolicy);
+
+        assertTrue(combined.isSuccess(),
+            "FALLBACK_ALLOWED + NOT_FOUND should fall back to badge");
+        assertEquals(VerificationResult.VerificationType.BADGE, combined.type());
+    }
+
+    // ==================== fromPolicy() factory method tests ====================
+
+    @Test
+    void fromPolicyWithPkiOnlyCreatesEmptyVerifier() {
+        DefaultConnectionVerifier verifier = DefaultConnectionVerifier.fromPolicy(
+            VerificationPolicy.PKI_ONLY, null, null);
+
+        assertNotNull(verifier);
+    }
+
+    @Test
+    void fromPolicyWithDaneRequiredWiresDaneVerifier() {
+        DaneTlsaVerifier tlsaVerifier = mock(DaneTlsaVerifier.class);
+
+        DefaultConnectionVerifier verifier = DefaultConnectionVerifier.fromPolicy(
+            VerificationPolicy.DANE_REQUIRED, null, tlsaVerifier);
+
+        assertNotNull(verifier);
+    }
+
+    @Test
+    void fromPolicyWithBadgeRequiredAndTransparencyClient() {
+        TransparencyClient tc = mock(TransparencyClient.class);
+        when(tc.getBaseUrl()).thenReturn("https://transparency.test.example.com");
+
+        DefaultConnectionVerifier verifier = DefaultConnectionVerifier.fromPolicy(
+            VerificationPolicy.BADGE_REQUIRED, tc, null);
+
+        assertNotNull(verifier);
+    }
+
+    @Test
+    void fromPolicyWithBadgeRequiredThrowsWithoutTransparencyClient() {
+        assertThrows(IllegalStateException.class, () ->
+            DefaultConnectionVerifier.fromPolicy(
+                VerificationPolicy.BADGE_REQUIRED, null, null));
+    }
+
+    @Test
+    void fromPolicyWithScittRequiredWiresScittVerifier() {
+        TransparencyClient tc = mock(TransparencyClient.class);
+        when(tc.getBaseUrl()).thenReturn("https://transparency.test.example.com");
+
+        DefaultConnectionVerifier verifier = DefaultConnectionVerifier.fromPolicy(
+            VerificationPolicy.SCITT_REQUIRED, tc, null);
+
+        assertNotNull(verifier);
+    }
+
+    @Test
+    void fromPolicyWithAllEnabled() {
+        TransparencyClient tc = mock(TransparencyClient.class);
+        when(tc.getBaseUrl()).thenReturn("https://transparency.test.example.com");
+        DaneTlsaVerifier tlsaVerifier = mock(DaneTlsaVerifier.class);
+
+        VerificationPolicy allEnabled = VerificationPolicy.custom()
+            .dane(VerificationMode.REQUIRED)
+            .badge(VerificationMode.REQUIRED)
+            .scitt(VerificationMode.REQUIRED)
+            .build();
+
+        DefaultConnectionVerifier verifier = DefaultConnectionVerifier.fromPolicy(
+            allEnabled, tc, tlsaVerifier);
+
+        assertNotNull(verifier);
+    }
+
+    @Test
+    void fromPolicyWithBadgeServiceOverride() {
+        ServerVerifier customService = mock(ServerVerifier.class);
+
+        DefaultConnectionVerifier verifier = DefaultConnectionVerifier.fromPolicy(
+            VerificationPolicy.BADGE_REQUIRED, null, null, customService);
+
+        assertNotNull(verifier);
+    }
+
+    @Test
+    void fromPolicySkipsDaneWhenVerifierNull() {
+        // DANE enabled in policy but no verifier provided — should not throw
+        DefaultConnectionVerifier verifier = DefaultConnectionVerifier.fromPolicy(
+            VerificationPolicy.DANE_REQUIRED, null, null);
+
+        assertNotNull(verifier);
+    }
+
+    @Test
+    void fromPolicySkipsScittWhenClientNull() {
+        // SCITT enabled in policy but no TransparencyClient — should not throw
+        DefaultConnectionVerifier verifier = DefaultConnectionVerifier.fromPolicy(
+            VerificationPolicy.SCITT_REQUIRED, null, null);
+
+        assertNotNull(verifier);
     }
 }

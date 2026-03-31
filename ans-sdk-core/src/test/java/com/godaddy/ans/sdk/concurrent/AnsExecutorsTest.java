@@ -7,11 +7,13 @@ import org.junit.jupiter.api.Test;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Unit tests for {@link AnsExecutors}.
@@ -264,6 +266,73 @@ class AnsExecutorsTest {
         } finally {
             scheduler.shutdown();
         }
+    }
+
+    @Test
+    @DisplayName("newIoExecutor should reject tasks with custom message when pool and queue are saturated")
+    void newIoExecutorShouldRejectWhenSaturated() throws Exception {
+        // Create a 1-thread executor via AnsExecutors to exercise its custom rejection handler
+        ExecutorService executor = AnsExecutors.newIoExecutor(1);
+        CountDownLatch blockLatch = new CountDownLatch(1);
+
+        try {
+            // Occupy the single thread with a blocking task
+            executor.execute(() -> {
+                try {
+                    blockLatch.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+
+            // Fill the bounded queue (DEFAULT_QUEUE_CAPACITY = 500)
+            for (int i = 0; i < AnsExecutors.DEFAULT_QUEUE_CAPACITY; i++) {
+                executor.execute(() -> { });
+            }
+
+            // The next task should trigger AnsExecutors' custom rejection handler
+            assertThatThrownBy(() -> executor.execute(() -> { }))
+                .isInstanceOf(RejectedExecutionException.class)
+                .hasMessageContaining("ANS IO executor saturated");
+        } finally {
+            blockLatch.countDown();
+            executor.shutdown();
+        }
+    }
+
+    @Test
+    @DisplayName("shutdown should handle interruption during awaitTermination")
+    void shutdownShouldHandleInterruption() throws Exception {
+        // Initialize the shared executor with a long-running task
+        Executor executor = AnsExecutors.sharedIoExecutor();
+        CountDownLatch taskStarted = new CountDownLatch(1);
+        CountDownLatch blockLatch = new CountDownLatch(1);
+
+        executor.execute(() -> {
+            taskStarted.countDown();
+            try {
+                blockLatch.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+
+        // Wait for the task to start
+        assertThat(taskStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+        // Interrupt the current thread before calling shutdown
+        // This causes awaitTermination to throw InterruptedException
+        Thread.currentThread().interrupt();
+        AnsExecutors.shutdown();
+
+        // The executor should still be cleaned up
+        assertThat(AnsExecutors.isInitialized()).isFalse();
+
+        // The interrupt flag should be restored (re-set by the catch block)
+        assertThat(Thread.interrupted()).isTrue();
+
+        // Release the blocking task
+        blockLatch.countDown();
     }
 
     @Test

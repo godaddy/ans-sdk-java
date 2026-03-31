@@ -33,6 +33,44 @@ public record ScittReceipt(
     byte[] eventPayload,
     byte[] signature
 ) {
+    /**
+     * Compact constructor that performs defensive copies of mutable byte arrays.
+     */
+    public ScittReceipt {
+        protectedHeaderBytes = protectedHeaderBytes != null ? protectedHeaderBytes.clone() : null;
+        eventPayload = eventPayload != null ? eventPayload.clone() : null;
+        signature = signature != null ? signature.clone() : null;
+    }
+
+    /**
+     * Returns a defensive copy of the protected header bytes.
+     *
+     * @return a copy of the protected header bytes
+     */
+    @Override
+    public byte[] protectedHeaderBytes() {
+        return protectedHeaderBytes != null ? protectedHeaderBytes.clone() : null;
+    }
+
+    /**
+     * Returns a defensive copy of the event payload.
+     *
+     * @return a copy of the event payload bytes
+     */
+    @Override
+    public byte[] eventPayload() {
+        return eventPayload != null ? eventPayload.clone() : null;
+    }
+
+    /**
+     * Returns a defensive copy of the signature.
+     *
+     * @return a copy of the signature bytes
+     */
+    @Override
+    public byte[] signature() {
+        return signature != null ? signature.clone() : null;
+    }
 
     /**
      * Merkle tree inclusion proof extracted from the receipt.
@@ -48,8 +86,45 @@ public record ScittReceipt(
         byte[] rootHash,
         List<byte[]> hashPath
     ) {
+        /**
+         * Compact constructor that performs defensive copies of mutable data.
+         */
         public InclusionProof {
-            hashPath = hashPath != null ? List.copyOf(hashPath) : List.of();
+            rootHash = rootHash != null ? rootHash.clone() : null;
+            // Deep copy the hash path - clone each byte array
+            if (hashPath != null) {
+                List<byte[]> copied = new ArrayList<>(hashPath.size());
+                for (byte[] hash : hashPath) {
+                    copied.add(hash != null ? hash.clone() : null);
+                }
+                hashPath = List.copyOf(copied);
+            } else {
+                hashPath = List.of();
+            }
+        }
+
+        /**
+         * Returns a defensive copy of the root hash.
+         *
+         * @return a copy of the root hash bytes, or null if not present
+         */
+        @Override
+        public byte[] rootHash() {
+            return rootHash != null ? rootHash.clone() : null;
+        }
+
+        /**
+         * Returns a defensive copy of the hash path.
+         *
+         * @return a new list with copies of all hash byte arrays
+         */
+        @Override
+        public List<byte[]> hashPath() {
+            List<byte[]> copied = new ArrayList<>(hashPath.size());
+            for (byte[] hash : hashPath) {
+                copied.add(hash != null ? hash.clone() : null);
+            }
+            return List.copyOf(copied);
         }
 
         @Override
@@ -185,6 +260,10 @@ public record ScittReceipt(
         }
         long treeSize = treeSizeObj.AsInt64Value();
 
+        if (treeSize < 0) {
+            throw new ScittParseException("Invalid tree size: " + treeSize + " (must be non-negative)");
+        }
+
         // Extract leaf_index (-2) - required
         CBORObject leafIndexObj = proofMap.get(CBORObject.FromObject(-2));
         if (leafIndexObj == null || !leafIndexObj.isNumber()) {
@@ -192,17 +271,27 @@ public record ScittReceipt(
         }
         long leafIndex = leafIndexObj.AsInt64Value();
 
+        if (leafIndex < 0) {
+            throw new ScittParseException("Invalid leaf index: " + leafIndex + " (must be non-negative)");
+        }
+
         // Extract hash_path (-3) - optional array of 32-byte hashes
         List<byte[]> hashPath = new ArrayList<>();
         CBORObject hashPathObj = proofMap.get(CBORObject.FromObject(-3));
         if (hashPathObj != null && hashPathObj.getType() == CBORType.Array) {
+            if (hashPathObj.size() > 64) {
+                // Even for 2^64 leaves, path length would be at most 64
+                throw new ScittParseException("Hash path too long: " + hashPathObj.size() + " (max 64)");
+            }
             for (int i = 0; i < hashPathObj.size(); i++) {
                 CBORObject element = hashPathObj.get(i);
                 if (element.getType() == CBORType.ByteString) {
                     byte[] hash = element.GetByteString();
-                    if (hash.length == 32) {
-                        hashPath.add(hash);
+                    if (hash.length != 32) {
+                        throw new ScittParseException(
+                            "Invalid hash at path index " + i + ": expected 32 bytes, got " + hash.length);
                     }
+                    hashPath.add(hash);
                 }
             }
         }
@@ -212,9 +301,11 @@ public record ScittReceipt(
         CBORObject rootHashObj = proofMap.get(CBORObject.FromObject(-4));
         if (rootHashObj != null && rootHashObj.getType() == CBORType.ByteString) {
             byte[] hash = rootHashObj.GetByteString();
-            if (hash.length == 32) {
-                rootHash = hash;
+            if (hash.length != 32) {
+                throw new ScittParseException(
+                    "Invalid root hash: expected 32 bytes, got " + hash.length);
             }
+            rootHash = hash;
         }
 
         return new InclusionProof(treeSize, leafIndex, rootHash, hashPath);

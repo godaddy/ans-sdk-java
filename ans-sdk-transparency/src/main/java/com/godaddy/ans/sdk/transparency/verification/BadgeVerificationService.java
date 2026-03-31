@@ -35,7 +35,7 @@ import java.util.stream.Collectors;
  * <p>Example usage:</p>
  * <pre>{@code
  * BadgeVerificationService verifier = BadgeVerificationService.builder()
- *     .transparencyClient(TransparencyClient.create())
+ *     .transparencyClient(TransparencyClient.createOte())
  *     .build();
  *
  * // Verify a server before connecting
@@ -672,13 +672,14 @@ public final class BadgeVerificationService implements ServerVerifier {
     }
 
     /**
-     * Creates a service with default configuration.
+     * Creates a service with the given transparency client.
      *
+     * @param transparencyClient the transparency client to use
      * @return a new service instance
      */
-    public static BadgeVerificationService create() {
+    public static BadgeVerificationService create(TransparencyClient transparencyClient) {
         return builder()
-            .transparencyClient(TransparencyClient.create())
+            .transparencyClient(transparencyClient)
             .build();
     }
 

@@ -1,9 +1,8 @@
 package com.godaddy.ans.examples.mcp.spring.config;
 
-import com.godaddy.ans.sdk.agent.verification.DefaultClientRequestVerifier;
+import com.godaddy.ans.sdk.agent.server.DefaultClientRequestVerifier;
 import com.godaddy.ans.sdk.transparency.TransparencyClient;
 import com.godaddy.ans.sdk.transparency.scitt.ScittArtifactManager;
-import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
@@ -27,7 +26,6 @@ public class ScittConfig {
     private static final Logger LOGGER = LoggerFactory.getLogger(ScittConfig.class);
 
     private final McpServerProperties properties;
-    private ScittArtifactManager artifactManager;
 
     public ScittConfig(McpServerProperties properties) {
         this.properties = properties;
@@ -57,10 +55,9 @@ public class ScittConfig {
      */
     @Bean
     public ScittArtifactManager scittArtifactManager(TransparencyClient transparencyClient) {
-        artifactManager = ScittArtifactManager.builder()
+        return ScittArtifactManager.builder()
                 .transparencyClient(transparencyClient)
                 .build();
-        return artifactManager;
     }
 
     /**
@@ -84,18 +81,4 @@ public class ScittConfig {
                 .build();
     }
 
-    /**
-     * Stops background refresh and releases resources on shutdown.
-     */
-    @PreDestroy
-    public void stopBackgroundRefresh() {
-        if (artifactManager != null) {
-            String agentId = properties.getAgentId();
-            if (agentId != null && !agentId.isBlank()) {
-                LOGGER.info("Stopping SCITT artifact background refresh for agent: {}", agentId);
-                artifactManager.stopBackgroundRefresh(agentId);
-            }
-            artifactManager.close();
-        }
-    }
 }

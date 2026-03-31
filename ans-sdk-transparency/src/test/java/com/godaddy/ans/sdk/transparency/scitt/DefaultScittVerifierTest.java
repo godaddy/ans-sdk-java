@@ -5,10 +5,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
-import com.godaddy.ans.sdk.crypto.CryptoCache;
-
-import org.bouncycastle.util.encoders.Hex;
-
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
@@ -31,29 +27,22 @@ import static org.mockito.Mockito.when;
 
 class DefaultScittVerifierTest {
 
+    private static final String TEST_ISSUER = "transparency.test.example.com";
+
     private DefaultScittVerifier verifier;
     private KeyPair keyPair;
 
     @BeforeEach
     void setUp() throws Exception {
-        verifier = new DefaultScittVerifier();
-
-        // Generate test EC key pair (P-256)
-        KeyPairGenerator keyGen = KeyPairGenerator.getInstance("EC");
-        keyGen.initialize(new ECGenParameterSpec("secp256r1"));
-        keyPair = keyGen.generateKeyPair();
+        verifier = new DefaultScittVerifier(TEST_ISSUER);
+        keyPair = ScittTestHelpers.generateEcKeyPair();
     }
 
     /**
      * Helper to convert a PublicKey to a Map keyed by hex key ID.
      */
     private Map<String, PublicKey> toRootKeys(PublicKey publicKey) {
-        // Compute hex key ID: SHA-256(SPKI-DER)[0:4] as hex
-        byte[] hash = CryptoCache.sha256(publicKey.getEncoded());
-        String hexKeyId = Hex.toHexString(Arrays.copyOf(hash, 4));
-        Map<String, PublicKey> map = new HashMap<>();
-        map.put(hexKeyId, publicKey);
-        return map;
+        return ScittTestHelpers.toRootKeys(publicKey);
     }
 
     @Nested
@@ -63,23 +52,31 @@ class DefaultScittVerifierTest {
         @Test
         @DisplayName("Should create verifier with default clock skew")
         void shouldCreateWithDefaultClockSkew() {
-            DefaultScittVerifier v = new DefaultScittVerifier();
+            DefaultScittVerifier v = new DefaultScittVerifier(TEST_ISSUER);
             assertThat(v).isNotNull();
         }
 
         @Test
         @DisplayName("Should create verifier with custom clock skew")
         void shouldCreateWithCustomClockSkew() {
-            DefaultScittVerifier v = new DefaultScittVerifier(Duration.ofMinutes(5));
+            DefaultScittVerifier v = new DefaultScittVerifier(Duration.ofMinutes(5), TEST_ISSUER);
             assertThat(v).isNotNull();
         }
 
         @Test
         @DisplayName("Should reject null clock skew tolerance")
         void shouldRejectNullClockSkew() {
-            assertThatThrownBy(() -> new DefaultScittVerifier(null))
+            assertThatThrownBy(() -> new DefaultScittVerifier(null, TEST_ISSUER))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("clockSkewTolerance cannot be null");
+        }
+
+        @Test
+        @DisplayName("Should reject null expected issuer")
+        void shouldRejectNullExpectedIssuer() {
+            assertThatThrownBy(() -> new DefaultScittVerifier(Duration.ofSeconds(60), null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("expectedIssuer cannot be null");
         }
     }
 
@@ -186,7 +183,7 @@ class DefaultScittVerifierTest {
         void shouldRejectNullHostname() {
             X509Certificate cert = mock(X509Certificate.class);
             ScittExpectation expectation = ScittExpectation.verified(
-                List.of("abc123"), List.of(), "host", "ans.test", Map.of(), null);
+                List.of("abc123"), List.of(), "ans.test", Map.of(), null);
 
             assertThatThrownBy(() -> verifier.postVerify(null, cert, expectation))
                 .isInstanceOf(NullPointerException.class)
@@ -197,7 +194,7 @@ class DefaultScittVerifierTest {
         @DisplayName("Should reject null server certificate")
         void shouldRejectNullServerCert() {
             ScittExpectation expectation = ScittExpectation.verified(
-                List.of("abc123"), List.of(), "host", "ans.test", Map.of(), null);
+                List.of("abc123"), List.of(), "ans.test", Map.of(), null);
 
             assertThatThrownBy(() -> verifier.postVerify("test.example.com", null, expectation))
                 .isInstanceOf(NullPointerException.class)
@@ -232,7 +229,7 @@ class DefaultScittVerifierTest {
         void shouldReturnErrorWhenNoFingerprints() {
             X509Certificate cert = mock(X509Certificate.class);
             ScittExpectation expectation = ScittExpectation.verified(
-                List.of(), List.of(), "host", "ans.test", Map.of(), null);
+                List.of(), List.of(), "ans.test", Map.of(), null);
 
             ScittVerifier.ScittVerificationResult result =
                 verifier.postVerify("test.example.com", cert, expectation);
@@ -255,7 +252,7 @@ class DefaultScittVerifierTest {
             String expectedFingerprint = bytesToHex(digest);
 
             ScittExpectation expectation = ScittExpectation.verified(
-                List.of(expectedFingerprint), List.of(), "host", "ans.test", Map.of(), null);
+                List.of(expectedFingerprint), List.of(), "ans.test", Map.of(), null);
 
             ScittVerifier.ScittVerificationResult result =
                 verifier.postVerify("test.example.com", cert, expectation);
@@ -272,7 +269,7 @@ class DefaultScittVerifierTest {
 
             ScittExpectation expectation = ScittExpectation.verified(
                 List.of("deadbeef00000000000000000000000000000000000000000000000000000000"),
-                List.of(), "host", "ans.test", Map.of(), null);
+                List.of(), "ans.test", Map.of(), null);
 
             ScittVerifier.ScittVerificationResult result =
                 verifier.postVerify("test.example.com", cert, expectation);
@@ -302,7 +299,7 @@ class DefaultScittVerifierTest {
             }
 
             ScittExpectation expectation = ScittExpectation.verified(
-                List.of(colonFormatted.toString()), List.of(), "host", "ans.test", Map.of(), null);
+                List.of(colonFormatted.toString()), List.of(), "ans.test", Map.of(), null);
 
             ScittVerifier.ScittVerificationResult result =
                 verifier.postVerify("test.example.com", cert, expectation);
@@ -327,7 +324,7 @@ class DefaultScittVerifierTest {
                     expectedFingerprint,
                     "wrong2000000000000000000000000000000000000000000000000000000000"
                 ),
-                List.of(), "host", "ans.test", Map.of(), null);
+                List.of(), "ans.test", Map.of(), null);
 
             ScittVerifier.ScittVerificationResult result =
                 verifier.postVerify("test.example.com", cert, expectation);
@@ -344,7 +341,7 @@ class DefaultScittVerifierTest {
         @DisplayName("Should accept token within clock skew tolerance")
         void shouldAcceptTokenWithinClockSkew() throws Exception {
             // Create verifier with 60 second clock skew
-            DefaultScittVerifier v = new DefaultScittVerifier(Duration.ofSeconds(60));
+            DefaultScittVerifier v = new DefaultScittVerifier(Duration.ofSeconds(60), TEST_ISSUER);
 
             ScittReceipt receipt = createValidSignedReceipt(keyPair.getPrivate());
             // Token expired 30 seconds ago (within 60 second tolerance)
@@ -359,7 +356,7 @@ class DefaultScittVerifierTest {
         @Test
         @DisplayName("Should reject token beyond clock skew tolerance")
         void shouldRejectTokenBeyondClockSkew() throws Exception {
-            DefaultScittVerifier v = new DefaultScittVerifier(Duration.ofSeconds(60));
+            DefaultScittVerifier v = new DefaultScittVerifier(Duration.ofSeconds(60), TEST_ISSUER);
 
             ScittReceipt receipt = createValidSignedReceipt(keyPair.getPrivate());
             // Token expired 120 seconds ago (beyond 60 second tolerance)
@@ -419,7 +416,8 @@ class DefaultScittVerifierTest {
             byte[] p1363Signature = convertDerToP1363(derSignature);
 
             byte[] keyId = computeKeyId(keyPair.getPublic());
-            CoseProtectedHeader header = new CoseProtectedHeader(-7, keyId, 1, null, null);
+            CwtClaims claims = new CwtClaims(TEST_ISSUER, null, null, null, null, null);
+            CoseProtectedHeader header = new CoseProtectedHeader(-7, keyId, 1, claims, null);
 
             // Proof without root hash (treeSize > 0 but rootHash = null) - INCOMPLETE
             ScittReceipt.InclusionProof incompleteProof = new ScittReceipt.InclusionProof(
@@ -482,7 +480,7 @@ class DefaultScittVerifierTest {
             // Verify with wrong key
             ScittExpectation result = verifier.verify(receipt, token, toRootKeys(wrongKeyPair.getPublic()));
 
-            assertThat(result.status()).isEqualTo(ScittExpectation.Status.INVALID_RECEIPT);
+            assertThat(result.status()).isEqualTo(ScittExpectation.Status.KEY_NOT_FOUND);
         }
     }
 
@@ -578,7 +576,8 @@ class DefaultScittVerifierTest {
             byte[] p1363Signature = convertDerToP1363(derSignature);
 
             byte[] keyId = computeKeyId(keyPair.getPublic());
-            CoseProtectedHeader header = new CoseProtectedHeader(-7, keyId, 1, null, null);
+            CwtClaims claims = new CwtClaims(TEST_ISSUER, null, null, null, null, null);
+            CoseProtectedHeader header = new CoseProtectedHeader(-7, keyId, 1, claims, null);
 
             // Single element tree: root == leaf hash
             byte[] leafHash = MerkleProofVerifier.hashLeaf(payload);
@@ -606,7 +605,7 @@ class DefaultScittVerifierTest {
             when(cert.getEncoded()).thenThrow(new java.security.cert.CertificateEncodingException("Test error"));
 
             ScittExpectation expectation = ScittExpectation.verified(
-                List.of("abc123"), List.of(), "host", "ans.test", Map.of(), null);
+                List.of("abc123"), List.of(), "ans.test", Map.of(), null);
 
             ScittVerifier.ScittVerificationResult result =
                 verifier.postVerify("test.example.com", cert, expectation);
@@ -658,7 +657,7 @@ class DefaultScittVerifierTest {
             String expectedFingerprint = bytesToHex(digest).toUpperCase();
 
             ScittExpectation expectation = ScittExpectation.verified(
-                List.of(expectedFingerprint), List.of(), "host", "ans.test", Map.of(), null);
+                List.of(expectedFingerprint), List.of(), "ans.test", Map.of(), null);
 
             ScittVerifier.ScittVerificationResult result =
                 verifier.postVerify("test.example.com", cert, expectation);
@@ -679,7 +678,7 @@ class DefaultScittVerifierTest {
             String fingerprintWithPrefix = "SHA256:" + hexFingerprint;
 
             ScittExpectation expectation = ScittExpectation.verified(
-                List.of(fingerprintWithPrefix), List.of(), "host", "ans.test", Map.of(), null);
+                List.of(fingerprintWithPrefix), List.of(), "ans.test", Map.of(), null);
 
             ScittVerifier.ScittVerificationResult result =
                 verifier.postVerify("test.example.com", cert, expectation);
@@ -710,7 +709,7 @@ class DefaultScittVerifierTest {
 
             ScittExpectation result = verifier.verify(receipt, token, toRootKeys(keyPair.getPublic()));
 
-            assertThat(result.status()).isEqualTo(ScittExpectation.Status.INVALID_RECEIPT);
+            assertThat(result.status()).isEqualTo(ScittExpectation.Status.KEY_NOT_FOUND);
             assertThat(result.failureReason()).contains("not in trust store");
         }
 
@@ -735,25 +734,22 @@ class DefaultScittVerifierTest {
             byte[] p1363Signature = convertDerToP1363(derSignature);
 
             CoseProtectedHeader tokenHeader = new CoseProtectedHeader(-7, wrongKeyId, null, null, null);
+            CoseEnvelope tokenEnvelope = new CoseEnvelope(tokenHeader, protectedHeaderBytes, payload, p1363Signature);
             StatusToken token = new StatusToken(
                 "test-agent-id",
                 StatusToken.Status.ACTIVE,
                 Instant.now().minusSeconds(60),
                 Instant.now().plusSeconds(3600),
                 "test.ans",
-                "test.example.com",
                 List.of(),
                 List.of(),
                 Map.of(),
-                tokenHeader,
-                protectedHeaderBytes,
-                payload,
-                p1363Signature
+                tokenEnvelope
             );
 
             ScittExpectation result = verifier.verify(receipt, token, toRootKeys(keyPair.getPublic()));
 
-            assertThat(result.status()).isEqualTo(ScittExpectation.Status.INVALID_TOKEN);
+            assertThat(result.status()).isEqualTo(ScittExpectation.Status.KEY_NOT_FOUND);
             assertThat(result.failureReason()).contains("not in trust store");
         }
 
@@ -782,7 +778,7 @@ class DefaultScittVerifierTest {
 
             ScittExpectation result = verifier.verify(receipt, token, toRootKeys(keyPair.getPublic()));
 
-            assertThat(result.status()).isEqualTo(ScittExpectation.Status.INVALID_RECEIPT);
+            assertThat(result.status()).isEqualTo(ScittExpectation.Status.KEY_NOT_FOUND);
             assertThat(result.failureReason()).contains("not in trust store");
         }
 
@@ -805,25 +801,22 @@ class DefaultScittVerifierTest {
 
             // null key ID should be rejected
             CoseProtectedHeader tokenHeader = new CoseProtectedHeader(-7, null, null, null, null);
+            CoseEnvelope tokenEnvelope = new CoseEnvelope(tokenHeader, protectedHeaderBytes, payload, p1363Signature);
             StatusToken token = new StatusToken(
                 "test-agent-id",
                 StatusToken.Status.ACTIVE,
                 Instant.now().minusSeconds(60),
                 Instant.now().plusSeconds(3600),
                 "test.ans",
-                "test.example.com",
                 List.of(),
                 List.of(),
                 Map.of(),
-                tokenHeader,
-                protectedHeaderBytes,
-                payload,
-                p1363Signature
+                tokenEnvelope
             );
 
             ScittExpectation result = verifier.verify(receipt, token, toRootKeys(keyPair.getPublic()));
 
-            assertThat(result.status()).isEqualTo(ScittExpectation.Status.INVALID_TOKEN);
+            assertThat(result.status()).isEqualTo(ScittExpectation.Status.KEY_NOT_FOUND);
             assertThat(result.failureReason()).contains("not in trust store");
         }
 
@@ -875,7 +868,188 @@ class DefaultScittVerifierTest {
         }
     }
 
+    @Nested
+    @DisplayName("Issuer binding tests")
+    class IssuerBindingTests {
+
+        @Test
+        @DisplayName("Should reject receipt with mismatched issuer")
+        void shouldRejectReceiptWithMismatchedIssuer() throws Exception {
+            // Receipt signed with CWT claims containing wrong issuer
+            CwtClaims wrongIssuerClaims = new CwtClaims("wrong.domain.com", null, null, null, null, null);
+            ScittReceipt receipt = createValidSignedReceiptWithCwtClaims(
+                keyPair.getPrivate(), wrongIssuerClaims);
+            StatusToken token = createValidSignedToken(keyPair.getPrivate(), StatusToken.Status.ACTIVE);
+
+            ScittExpectation result = verifier.verify(receipt, token, toRootKeys(keyPair.getPublic()));
+
+            assertThat(result.status()).isEqualTo(ScittExpectation.Status.INVALID_RECEIPT);
+            assertThat(result.failureReason()).contains("issuer mismatch");
+        }
+
+        @Test
+        @DisplayName("Should reject token with mismatched issuer")
+        void shouldRejectTokenWithMismatchedIssuer() throws Exception {
+            ScittReceipt receipt = createValidSignedReceipt(keyPair.getPrivate());
+            CwtClaims wrongIssuerClaims = new CwtClaims("wrong.domain.com", null, null, null, null, null);
+            StatusToken token = createValidSignedTokenWithCwtClaims(
+                keyPair.getPrivate(), StatusToken.Status.ACTIVE, wrongIssuerClaims);
+
+            ScittExpectation result = verifier.verify(receipt, token, toRootKeys(keyPair.getPublic()));
+
+            assertThat(result.status()).isEqualTo(ScittExpectation.Status.INVALID_TOKEN);
+            assertThat(result.failureReason()).contains("issuer mismatch");
+        }
+
+        @Test
+        @DisplayName("Should accept artifacts with matching issuer")
+        void shouldAcceptMatchingIssuer() throws Exception {
+            CwtClaims matchingClaims = new CwtClaims(TEST_ISSUER, null, null, null, null, null);
+            ScittReceipt receipt = createValidSignedReceiptWithCwtClaims(
+                keyPair.getPrivate(), matchingClaims);
+            StatusToken token = createValidSignedTokenWithCwtClaims(
+                keyPair.getPrivate(), StatusToken.Status.ACTIVE, matchingClaims);
+
+            ScittExpectation result = verifier.verify(receipt, token, toRootKeys(keyPair.getPublic()));
+
+            assertThat(result.status()).isEqualTo(ScittExpectation.Status.VERIFIED);
+        }
+
+        @Test
+        @DisplayName("Should reject receipt with missing CWT claims")
+        void shouldRejectReceiptWithMissingCwtClaims() throws Exception {
+            ScittReceipt receipt = createValidSignedReceiptWithCwtClaims(keyPair.getPrivate(), null);
+            StatusToken token = createValidSignedToken(keyPair.getPrivate(), StatusToken.Status.ACTIVE);
+
+            ScittExpectation result = verifier.verify(receipt, token, toRootKeys(keyPair.getPublic()));
+
+            assertThat(result.status()).isEqualTo(ScittExpectation.Status.INVALID_RECEIPT);
+            assertThat(result.failureReason()).contains("missing CWT claims");
+        }
+
+        @Test
+        @DisplayName("Should reject token with missing CWT claims")
+        void shouldRejectTokenWithMissingCwtClaims() throws Exception {
+            ScittReceipt receipt = createValidSignedReceipt(keyPair.getPrivate());
+            CoseProtectedHeader tokenHeader = new CoseProtectedHeader(
+                -7, computeKeyId(keyPair.getPublic()), null, null, null);
+            StatusToken token = createValidSignedTokenWithHeader(
+                keyPair.getPrivate(), StatusToken.Status.ACTIVE, tokenHeader);
+
+            ScittExpectation result = verifier.verify(receipt, token, toRootKeys(keyPair.getPublic()));
+
+            assertThat(result.status()).isEqualTo(ScittExpectation.Status.INVALID_TOKEN);
+            assertThat(result.failureReason()).contains("missing CWT claims");
+        }
+
+        @Test
+        @DisplayName("Should reject receipt with missing issuer claim")
+        void shouldRejectReceiptWithMissingIssuerClaim() throws Exception {
+            CwtClaims noIssuer = new CwtClaims(null, null, null, null, null, null);
+            ScittReceipt receipt = createValidSignedReceiptWithCwtClaims(keyPair.getPrivate(), noIssuer);
+            StatusToken token = createValidSignedToken(keyPair.getPrivate(), StatusToken.Status.ACTIVE);
+
+            ScittExpectation result = verifier.verify(receipt, token, toRootKeys(keyPair.getPublic()));
+
+            assertThat(result.status()).isEqualTo(ScittExpectation.Status.INVALID_RECEIPT);
+            assertThat(result.failureReason()).contains("missing issuer claim");
+        }
+
+        @Test
+        @DisplayName("Should reject token with missing issuer claim")
+        void shouldRejectTokenWithMissingIssuerClaim() throws Exception {
+            ScittReceipt receipt = createValidSignedReceipt(keyPair.getPrivate());
+            CwtClaims noIssuer = new CwtClaims(null, null, null, null, null, null);
+            StatusToken token = createValidSignedTokenWithCwtClaims(
+                keyPair.getPrivate(), StatusToken.Status.ACTIVE, noIssuer);
+
+            ScittExpectation result = verifier.verify(receipt, token, toRootKeys(keyPair.getPublic()));
+
+            assertThat(result.status()).isEqualTo(ScittExpectation.Status.INVALID_TOKEN);
+            assertThat(result.failureReason()).contains("missing issuer claim");
+        }
+    }
+
     // Helper methods
+
+    private ScittReceipt createValidSignedReceiptWithCwtClaims(
+            PrivateKey privateKey, CwtClaims cwtClaims) throws Exception {
+        byte[] protectedHeaderBytes = new byte[10];
+        byte[] payload = "test-payload".getBytes();
+
+        byte[] sigStructure = CoseSign1Parser.buildSigStructure(protectedHeaderBytes, null, payload);
+        Signature sig = Signature.getInstance("SHA256withECDSA");
+        sig.initSign(privateKey);
+        sig.update(sigStructure);
+        byte[] derSignature = sig.sign();
+        byte[] p1363Signature = convertDerToP1363(derSignature);
+
+        byte[] keyId = computeKeyId(keyPair.getPublic());
+        CoseProtectedHeader header = new CoseProtectedHeader(-7, keyId, 1, cwtClaims, null);
+
+        byte[] leafHash = MerkleProofVerifier.hashLeaf(payload);
+        ScittReceipt.InclusionProof proof = new ScittReceipt.InclusionProof(
+            1, 0, leafHash, List.of());
+
+        return new ScittReceipt(header, protectedHeaderBytes, proof, payload, p1363Signature);
+    }
+
+    private StatusToken createValidSignedTokenWithCwtClaims(
+            PrivateKey privateKey, StatusToken.Status status, CwtClaims cwtClaims) throws Exception {
+        byte[] protectedHeaderBytes = new byte[10];
+        byte[] payload = ("agent_id:test-agent,status:" + status.name()).getBytes();
+
+        byte[] sigStructure = CoseSign1Parser.buildSigStructure(protectedHeaderBytes, null, payload);
+        Signature sig = Signature.getInstance("SHA256withECDSA");
+        sig.initSign(privateKey);
+        sig.update(sigStructure);
+        byte[] derSignature = sig.sign();
+        byte[] p1363Signature = convertDerToP1363(derSignature);
+
+        byte[] keyId = computeKeyId(keyPair.getPublic());
+        CoseProtectedHeader header = new CoseProtectedHeader(-7, keyId, null, cwtClaims, null);
+        CoseEnvelope envelope = new CoseEnvelope(header, protectedHeaderBytes, payload, p1363Signature);
+
+        return new StatusToken(
+            "test-agent-id",
+            status,
+            Instant.now().minusSeconds(60),
+            Instant.now().plusSeconds(3600),
+            "test.ans",
+            List.of(),
+            List.of(),
+            Map.of(),
+            envelope
+        );
+    }
+
+    private StatusToken createValidSignedTokenWithHeader(
+            PrivateKey privateKey, StatusToken.Status status,
+            CoseProtectedHeader header) throws Exception {
+        byte[] protectedHeaderBytes = new byte[10];
+        byte[] payload = ("agent_id:test-agent,status:" + status.name()).getBytes();
+
+        byte[] sigStructure = CoseSign1Parser.buildSigStructure(protectedHeaderBytes, null, payload);
+        Signature sig = Signature.getInstance("SHA256withECDSA");
+        sig.initSign(privateKey);
+        sig.update(sigStructure);
+        byte[] derSignature = sig.sign();
+        byte[] p1363Signature = convertDerToP1363(derSignature);
+
+        CoseEnvelope envelope = new CoseEnvelope(header, protectedHeaderBytes, payload, p1363Signature);
+
+        return new StatusToken(
+            "test-agent-id",
+            status,
+            Instant.now().minusSeconds(60),
+            Instant.now().plusSeconds(3600),
+            "test.ans",
+            List.of(),
+            List.of(),
+            Map.of(),
+            envelope
+        );
+    }
 
     private ScittReceipt createMockReceipt() {
         try {
@@ -914,47 +1088,29 @@ class DefaultScittVerifierTest {
     }
 
     private ScittReceipt createValidSignedReceipt(PrivateKey privateKey) throws Exception {
-        byte[] protectedHeaderBytes = new byte[10];
-        byte[] payload = "test-payload".getBytes();
-
-        // Build sig structure
-        byte[] sigStructure = CoseSign1Parser.buildSigStructure(protectedHeaderBytes, null, payload);
-
-        // Sign
-        Signature sig = Signature.getInstance("SHA256withECDSA");
-        sig.initSign(privateKey);
-        sig.update(sigStructure);
-        byte[] derSignature = sig.sign();
-        byte[] p1363Signature = convertDerToP1363(derSignature);
-
-        byte[] keyId = computeKeyId(keyPair.getPublic());
-        CoseProtectedHeader header = new CoseProtectedHeader(-7, keyId, 1, null, null);
-
-        // Create valid Merkle proof
-        byte[] leafHash = MerkleProofVerifier.hashLeaf(payload);
-        ScittReceipt.InclusionProof proof = new ScittReceipt.InclusionProof(
-            1, 0, leafHash, List.of());
-
-        return new ScittReceipt(header, protectedHeaderBytes, proof, payload, p1363Signature);
+        CwtClaims claims = new CwtClaims(TEST_ISSUER, null, null, null, null, null);
+        return createValidSignedReceiptWithCwtClaims(privateKey, claims);
     }
 
     private StatusToken createMockStatusToken(StatusToken.Status status) {
         try {
             byte[] keyId = computeKeyId(keyPair.getPublic());
+            CoseEnvelope envelope = new CoseEnvelope(
+                new CoseProtectedHeader(-7, keyId, null, null, null),
+                new byte[10],
+                "test-payload".getBytes(),
+                new byte[64]
+            );
             return new StatusToken(
                 "test-agent-id",
                 status,
                 Instant.now().minusSeconds(60),
                 Instant.now().plusSeconds(3600),
                 "test.ans",
-                "test.example.com",
                 List.of(),
                 List.of(),
                 Map.of(),
-                new CoseProtectedHeader(-7, keyId, null, null, null),
-                new byte[10],
-                "test-payload".getBytes(),
-                new byte[64]
+                envelope
             );
         } catch (Exception e) {
             throw new RuntimeException(e);
@@ -962,35 +1118,8 @@ class DefaultScittVerifierTest {
     }
 
     private StatusToken createValidSignedToken(PrivateKey privateKey, StatusToken.Status status) throws Exception {
-        byte[] protectedHeaderBytes = new byte[10];
-        byte[] payload = ("agent_id:test-agent,status:" + status.name()).getBytes();
-
-        byte[] sigStructure = CoseSign1Parser.buildSigStructure(protectedHeaderBytes, null, payload);
-
-        Signature sig = Signature.getInstance("SHA256withECDSA");
-        sig.initSign(privateKey);
-        sig.update(sigStructure);
-        byte[] derSignature = sig.sign();
-        byte[] p1363Signature = convertDerToP1363(derSignature);
-
-        byte[] keyId = computeKeyId(keyPair.getPublic());
-        CoseProtectedHeader header = new CoseProtectedHeader(-7, keyId, null, null, null);
-
-        return new StatusToken(
-            "test-agent-id",
-            status,
-            Instant.now().minusSeconds(60),
-            Instant.now().plusSeconds(3600),
-            "test.ans",
-            "test.example.com",
-            List.of(),
-            List.of(),
-            Map.of(),
-            header,
-            protectedHeaderBytes,
-            payload,
-            p1363Signature
-        );
+        CwtClaims claims = new CwtClaims(TEST_ISSUER, null, null, null, null, null);
+        return createValidSignedTokenWithCwtClaims(privateKey, status, claims);
     }
 
     private StatusToken createExpiredToken(PrivateKey privateKey, Duration expiredAgo) throws Exception {
@@ -1007,6 +1136,7 @@ class DefaultScittVerifierTest {
 
         byte[] keyId = computeKeyId(keyPair.getPublic());
         CoseProtectedHeader header = new CoseProtectedHeader(-7, keyId, null, null, null);
+        CoseEnvelope envelope = new CoseEnvelope(header, protectedHeaderBytes, payload, p1363Signature);
 
         return new StatusToken(
             "test-agent-id",
@@ -1014,67 +1144,26 @@ class DefaultScittVerifierTest {
             Instant.now().minusSeconds(7200),
             Instant.now().minus(expiredAgo),  // Expired
             "test.ans",
-            "test.example.com",
             List.of(),
             List.of(),
             Map.of(),
-            header,
-            protectedHeaderBytes,
-            payload,
-            p1363Signature
+            envelope
         );
     }
 
     private byte[] convertDerToP1363(byte[] derSignature) {
-        // DER format: SEQUENCE { INTEGER r, INTEGER s }
-        // P1363 format: r || s (each 32 bytes for P-256)
-        byte[] p1363 = new byte[64];
-
-        int offset = 2; // Skip SEQUENCE tag and length
-        if (derSignature[1] == (byte) 0x81) {
-            offset++;
-        }
-
-        // Parse r
-        offset++; // Skip INTEGER tag
-        int rLen = derSignature[offset++] & 0xFF;
-        int rOffset = offset;
-        if (rLen == 33 && derSignature[rOffset] == 0) {
-            rOffset++;
-            rLen--;
-        }
-        System.arraycopy(derSignature, rOffset, p1363, 32 - rLen, rLen);
-        offset += (derSignature[offset - 1] & 0xFF);
-
-        // Parse s
-        offset++; // Skip INTEGER tag
-        int sLen = derSignature[offset++] & 0xFF;
-        int sOffset = offset;
-        if (sLen == 33 && derSignature[sOffset] == 0) {
-            sOffset++;
-            sLen--;
-        }
-        System.arraycopy(derSignature, sOffset, p1363, 64 - sLen, sLen);
-
-        return p1363;
+        return ScittTestHelpers.convertDerToP1363(derSignature);
     }
 
     private static String bytesToHex(byte[] bytes) {
-        StringBuilder sb = new StringBuilder();
-        for (byte b : bytes) {
-            sb.append(String.format("%02x", b));
-        }
-        return sb.toString();
+        return ScittTestHelpers.bytesToHex(bytes);
     }
 
     /**
      * Computes the key ID for a public key per C2SP specification.
      * The key ID is the first 4 bytes of SHA-256(SPKI-DER).
      */
-    private byte[] computeKeyId(java.security.PublicKey publicKey) throws Exception {
-        byte[] spkiDer = publicKey.getEncoded();
-        MessageDigest md = MessageDigest.getInstance("SHA-256");
-        byte[] hash = md.digest(spkiDer);
-        return Arrays.copyOf(hash, 4);
+    private byte[] computeKeyId(PublicKey publicKey) throws Exception {
+        return ScittTestHelpers.computeKeyId(publicKey);
     }
 }

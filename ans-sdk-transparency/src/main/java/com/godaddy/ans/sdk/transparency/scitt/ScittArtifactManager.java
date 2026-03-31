@@ -11,14 +11,18 @@ import org.slf4j.LoggerFactory;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.function.Function;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Manages SCITT artifact lifecycle including fetching, caching, and background refresh.
@@ -47,11 +51,9 @@ import java.util.concurrent.TimeUnit;
  * // Start background refresh to keep token fresh
  * manager.startBackgroundRefresh(myAgentId);
  *
- * // When handling requests, get pre-computed Base64 strings for response headers
- * String receiptBase64 = manager.getReceiptBase64(myAgentId).join();
- * String tokenBase64 = manager.getStatusTokenBase64(myAgentId).join();
- * response.addHeader("X-SCITT-Receipt", receiptBase64);
- * response.addHeader("X-ANS-Status-Token", tokenBase64);
+ * // When handling requests, get pre-computed headers for responses
+ * Map<String, String> headers = manager.getOutgoingHeaders(myAgentId).join();
+ * headers.forEach((name, value) -> response.addHeader(name, value));
  *
  * // On shutdown
  * manager.close();
@@ -80,7 +82,7 @@ public class ScittArtifactManager implements AutoCloseable {
     // Background refresh tracking
     private final Map<String, ScheduledFuture<?>> refreshTasks;
 
-    private volatile boolean closed = false;
+    private final AtomicBoolean closed = new AtomicBoolean(false);
 
     private ScittArtifactManager(Builder builder) {
         this.transparencyClient = Objects.requireNonNull(builder.transparencyClient,
@@ -134,7 +136,7 @@ public class ScittArtifactManager implements AutoCloseable {
     public CompletableFuture<ScittReceipt> getReceipt(String agentId) {
         Objects.requireNonNull(agentId, "agentId cannot be null");
 
-        if (closed) {
+        if (closed.get()) {
             return CompletableFuture.failedFuture(
                 new IllegalStateException("ScittArtifactManager is closed"));
         }
@@ -143,24 +145,42 @@ public class ScittArtifactManager implements AutoCloseable {
     }
 
     /**
-     * Fetches the Base64-encoded SCITT receipt for an agent.
+     * Fetches SCITT headers for an agent, ready to add to HTTP responses.
      *
-     * <p>This method returns the pre-computed Base64 string ready for use in
-     * HTTP headers. The Base64 encoding is computed once at cache-fill time,
+     * <p>Returns a map containing the Base64-encoded receipt and status token
+     * headers. The Base64 encoding is computed once at cache-fill time,
      * avoiding byte array allocation on each call.</p>
      *
+     * <p>Example usage:</p>
+     * <pre>{@code
+     * Map<String, String> headers = manager.getOutgoingHeaders(agentId).join();
+     * headers.forEach((name, value) -> response.addHeader(name, value));
+     * }</pre>
+     *
      * @param agentId the agent's unique identifier
-     * @return future containing the Base64-encoded receipt
+     * @return future containing a map of header names to Base64-encoded values
      */
-    public CompletableFuture<String> getReceiptBase64(String agentId) {
+    public CompletableFuture<Map<String, String>> getOutgoingHeaders(String agentId) {
         Objects.requireNonNull(agentId, "agentId cannot be null");
 
-        if (closed) {
+        if (closed.get()) {
             return CompletableFuture.failedFuture(
                 new IllegalStateException("ScittArtifactManager is closed"));
         }
 
-        return receiptCache.get(agentId).thenApply(CachedReceipt::base64);
+        CompletableFuture<CachedReceipt> receiptFuture = receiptCache.get(agentId);
+        CompletableFuture<CachedToken> tokenFuture = tokenCache.get(agentId);
+
+        return receiptFuture.thenCombine(tokenFuture, (receipt, token) -> {
+            Map<String, String> headers = new HashMap<>();
+            if (receipt != null && receipt.base64() != null) {
+                headers.put(ScittHeaders.SCITT_RECEIPT_HEADER, receipt.base64());
+            }
+            if (token != null && token.base64() != null) {
+                headers.put(ScittHeaders.STATUS_TOKEN_HEADER, token.base64());
+            }
+            return Collections.unmodifiableMap(headers);
+        });
     }
 
     /**
@@ -174,33 +194,12 @@ public class ScittArtifactManager implements AutoCloseable {
     public CompletableFuture<StatusToken> getStatusToken(String agentId) {
         Objects.requireNonNull(agentId, "agentId cannot be null");
 
-        if (closed) {
+        if (closed.get()) {
             return CompletableFuture.failedFuture(
                 new IllegalStateException("ScittArtifactManager is closed"));
         }
 
         return tokenCache.get(agentId).thenApply(CachedToken::token);
-    }
-
-    /**
-     * Fetches the Base64-encoded status token for an agent.
-     *
-     * <p>This method returns the pre-computed Base64 string ready for use in
-     * HTTP headers. The Base64 encoding is computed once at cache-fill time,
-     * avoiding byte array allocation on each call.</p>
-     *
-     * @param agentId the agent's unique identifier
-     * @return future containing the Base64-encoded status token
-     */
-    public CompletableFuture<String> getStatusTokenBase64(String agentId) {
-        Objects.requireNonNull(agentId, "agentId cannot be null");
-
-        if (closed) {
-            return CompletableFuture.failedFuture(
-                new IllegalStateException("ScittArtifactManager is closed"));
-        }
-
-        return tokenCache.get(agentId).thenApply(CachedToken::base64);
     }
 
     /**
@@ -214,7 +213,7 @@ public class ScittArtifactManager implements AutoCloseable {
     public void startBackgroundRefresh(String agentId) {
         Objects.requireNonNull(agentId, "agentId cannot be null");
 
-        if (closed) {
+        if (closed.get()) {
             LOGGER.warn("Cannot start background refresh - manager is closed");
             return;
         }
@@ -263,11 +262,9 @@ public class ScittArtifactManager implements AutoCloseable {
 
     @Override
     public void close() {
-        if (closed) {
+        if (!closed.compareAndSet(false, true)) {
             return;
         }
-
-        closed = true;
         LOGGER.info("Shutting down ScittArtifactManager");
 
         // Cancel all refresh tasks
@@ -293,33 +290,34 @@ public class ScittArtifactManager implements AutoCloseable {
     // ==================== Cache Loaders ====================
 
     private CachedReceipt loadReceipt(String agentId) {
-        LOGGER.info("Fetching receipt for agent from TL {}", agentId);
-        try {
-            byte[] receiptBytes = transparencyClient.getReceipt(agentId);
-            ScittReceipt receipt = ScittReceipt.parse(receiptBytes);
-            LOGGER.info("Fetched and cached receipt for agent {} from TL", agentId);
-            return new CachedReceipt(receipt, receiptBytes);
-        } catch (Exception e) {
-            LOGGER.error("Failed to fetch receipt for agent {}: {}", agentId, e.getMessage());
-            throw new ScittFetchException(
-                "Failed to fetch receipt: " + e.getMessage(), e,
-                ScittFetchException.ArtifactType.RECEIPT, agentId);
-        }
+        return loadArtifact(agentId, transparencyClient::getReceipt,
+            bytes -> new CachedReceipt(ScittReceipt.parse(bytes), bytes),
+            ScittFetchException.ArtifactType.RECEIPT, "receipt");
     }
 
     private CachedToken loadToken(String agentId) {
-        LOGGER.info("Fetching status token for agent {}", agentId);
+        return loadArtifact(agentId, transparencyClient::getStatusToken,
+            bytes -> new CachedToken(StatusToken.parse(bytes), bytes),
+            ScittFetchException.ArtifactType.STATUS_TOKEN, "status token");
+    }
+
+    @FunctionalInterface
+    private interface CheckedParser<T> {
+        T parse(byte[] bytes) throws Exception;
+    }
+
+    private <T> T loadArtifact(String agentId, Function<String, byte[]> fetcher,
+            CheckedParser<T> parser, ScittFetchException.ArtifactType type, String label) {
+        LOGGER.info("Fetching {} for agent {}", label, agentId);
         try {
-            byte[] tokenBytes = transparencyClient.getStatusToken(agentId);
-            StatusToken token = StatusToken.parse(tokenBytes);
-            LOGGER.info("Fetched and cached status token for agent {} (expires {})",
-                agentId, token.expiresAt());
-            return new CachedToken(token, tokenBytes);
+            byte[] bytes = fetcher.apply(agentId);
+            T result = parser.parse(bytes);
+            LOGGER.info("Fetched and cached {} for agent {}", label, agentId);
+            return result;
         } catch (Exception e) {
-            LOGGER.error("Failed to fetch status token for agent {}: {}", agentId, e.getMessage());
+            LOGGER.error("Failed to fetch {} for agent {}: {}", label, agentId, e.getMessage());
             throw new ScittFetchException(
-                "Failed to fetch status token: " + e.getMessage(), e,
-                ScittFetchException.ArtifactType.STATUS_TOKEN, agentId);
+                "Failed to fetch " + label + ": " + e.getMessage(), e, type, agentId);
         }
     }
 
@@ -329,7 +327,7 @@ public class ScittArtifactManager implements AutoCloseable {
         // Cancel existing task if any
         stopBackgroundRefresh(agentId);
 
-        if (closed) {
+        if (closed.get()) {
             return;
         }
 
@@ -346,21 +344,27 @@ public class ScittArtifactManager implements AutoCloseable {
     }
 
     private void refreshToken(String agentId) {
-        if (closed) {
+        if (closed.get()) {
             return;
         }
 
         LOGGER.debug("Background refresh triggered for agent {}", agentId);
 
-        // Use Caffeine's refresh which handles stampede prevention
-        tokenCache.synchronous().refresh(agentId);
-
-        // Reschedule with new interval based on refreshed token
-        CachedToken refreshed = tokenCache.synchronous().getIfPresent(agentId);
-        if (refreshed != null && !closed) {
-            Duration newInterval = refreshed.token().computeRefreshInterval();
-            scheduleRefresh(agentId, newInterval);
-        }
+        // Use async path to avoid blocking the single scheduler thread
+        tokenCache.synchronous().invalidate(agentId);
+        tokenCache.get(agentId).whenComplete((refreshed, error) -> {
+            if (error != null) {
+                LOGGER.warn("Background refresh failed for agent {}: {}", agentId, error.getMessage());
+                if (!closed.get()) {
+                    scheduleRefresh(agentId, Duration.ofMinutes(5));
+                }
+                return;
+            }
+            if (refreshed != null && !closed.get()) {
+                Duration newInterval = refreshed.token().computeRefreshInterval();
+                scheduleRefresh(agentId, newInterval);
+            }
+        });
     }
 
     // ==================== Caffeine Expiry for Status Tokens ====================

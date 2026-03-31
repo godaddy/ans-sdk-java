@@ -51,14 +51,10 @@ public interface ScittHeaderProvider {
      *
      * @param receipt the parsed SCITT receipt (null if not present)
      * @param statusToken the parsed status token (null if not present)
-     * @param receiptBytes raw receipt bytes for caching
-     * @param tokenBytes raw token bytes for caching
      */
     record ScittArtifacts(
         ScittReceipt receipt,
-        StatusToken statusToken,
-        byte[] receiptBytes,
-        byte[] tokenBytes
+        StatusToken statusToken
     ) {
         /**
          * Returns true if both receipt and status token are present.

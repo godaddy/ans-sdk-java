@@ -1,11 +1,10 @@
 package com.godaddy.ans.sdk.transparency.scitt;
 
+import com.godaddy.ans.sdk.crypto.CertificateUtils;
 import com.godaddy.ans.sdk.crypto.CryptoCache;
-import org.bouncycastle.util.encoders.Hex;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.security.MessageDigest;
 import java.security.PublicKey;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
@@ -25,26 +24,31 @@ import java.util.Objects;
  *   <li>Constant-time fingerprint comparison</li>
  * </ul>
  */
-public class DefaultScittVerifier implements ScittVerifier {
+public final class DefaultScittVerifier implements ScittVerifier {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(DefaultScittVerifier.class);
 
     private final Duration clockSkewTolerance;
+    private final String expectedIssuer;
 
     /**
      * Creates a new verifier with default clock skew tolerance (60 seconds).
+     *
+     * @param expectedIssuer the expected issuer domain (C2SP domain of the transparency log)
      */
-    public DefaultScittVerifier() {
-        this(StatusToken.DEFAULT_CLOCK_SKEW);
+    public DefaultScittVerifier(String expectedIssuer) {
+        this(StatusToken.DEFAULT_CLOCK_SKEW, expectedIssuer);
     }
 
     /**
      * Creates a new verifier with the specified clock skew tolerance.
      *
      * @param clockSkewTolerance the clock skew tolerance for token expiry checks
+     * @param expectedIssuer the expected issuer domain (C2SP domain of the transparency log)
      */
-    public DefaultScittVerifier(Duration clockSkewTolerance) {
+    public DefaultScittVerifier(Duration clockSkewTolerance, String expectedIssuer) {
         this.clockSkewTolerance = Objects.requireNonNull(clockSkewTolerance, "clockSkewTolerance cannot be null");
+        this.expectedIssuer = Objects.requireNonNull(expectedIssuer, "expectedIssuer cannot be null");
     }
 
     @Override
@@ -71,8 +75,8 @@ public class DefaultScittVerifier implements ScittVerifier {
             if (receiptKey == null) {
                 LOGGER.warn("Receipt key ID {} not in trust store (have {} keys)",
                     receiptKeyId, rootKeys.size());
-                return ScittExpectation.invalidReceipt(
-                    "Key ID " + receiptKeyId + " not in trust store (have " + rootKeys.size() + " keys)");
+                return ScittExpectation.keyNotFound(
+                    "Receipt key ID " + receiptKeyId + " not in trust store (have " + rootKeys.size() + " keys)");
             }
             LOGGER.debug("Found receipt key with ID {}", receiptKeyId);
 
@@ -82,6 +86,12 @@ public class DefaultScittVerifier implements ScittVerifier {
                 return ScittExpectation.invalidReceipt("Receipt signature verification failed");
             }
             LOGGER.debug("Receipt signature verified for agent {}", token.agentId());
+
+            // 2a. Validate receipt issuer binding
+            String issuerError = validateIssuer(receipt.protectedHeader(), "Receipt");
+            if (issuerError != null) {
+                return ScittExpectation.invalidReceipt(issuerError);
+            }
 
             // 3. Verify Merkle inclusion proof
             if (!verifyMerkleProof(receipt)) {
@@ -96,8 +106,8 @@ public class DefaultScittVerifier implements ScittVerifier {
             if (tokenKey == null) {
                 LOGGER.warn("Token key ID {} not in trust store (have {} keys)",
                     tokenKeyId, rootKeys.size());
-                return ScittExpectation.invalidToken(
-                    "Key ID " + tokenKeyId + " not in trust store (have " + rootKeys.size() + " keys)");
+                return ScittExpectation.keyNotFound(
+                    "Token key ID " + tokenKeyId + " not in trust store (have " + rootKeys.size() + " keys)");
             }
             LOGGER.debug("Found token key with ID {}", tokenKeyId);
 
@@ -107,6 +117,12 @@ public class DefaultScittVerifier implements ScittVerifier {
                 return ScittExpectation.invalidToken("Status token signature verification failed");
             }
             LOGGER.debug("Status token signature verified for agent {}", token.agentId());
+
+            // 5a. Validate token issuer binding
+            issuerError = validateIssuer(token.protectedHeader(), "Status token");
+            if (issuerError != null) {
+                return ScittExpectation.invalidToken(issuerError);
+            }
 
             // 6. Check status token expiry
             Instant now = Instant.now();
@@ -133,8 +149,7 @@ public class DefaultScittVerifier implements ScittVerifier {
             return ScittExpectation.verified(
                 token.serverCertFingerprints(),
                 token.identityCertFingerprints(),
-                token.agentHost(),
-                token.ansName(),
+                    token.ansName(),
                 token.metadataHashes(),
                 token
             );
@@ -171,11 +186,11 @@ public class DefaultScittVerifier implements ScittVerifier {
             String actualFingerprint = computeCertificateFingerprint(serverCert);
 
             LOGGER.debug("Comparing certificate fingerprint {} against {} expected fingerprints",
-                truncateFingerprint(actualFingerprint), expectedFingerprints.size());
+                CertificateUtils.truncateFingerprint(actualFingerprint), expectedFingerprints.size());
 
             // SECURITY: Use constant-time comparison for fingerprints
             for (String expectedFingerprint : expectedFingerprints) {
-                if (fingerprintMatches(actualFingerprint, expectedFingerprint)) {
+                if (CertificateUtils.fingerprintMatches(actualFingerprint, expectedFingerprint)) {
                     LOGGER.debug("Certificate fingerprint matches for {}", hostname);
                     return ScittVerificationResult.success(actualFingerprint);
                 }
@@ -183,7 +198,7 @@ public class DefaultScittVerifier implements ScittVerifier {
 
             // No match found
             LOGGER.warn("Certificate fingerprint mismatch for {}: got {}, expected one of {}",
-                hostname, truncateFingerprint(actualFingerprint), expectedFingerprints.size());
+                hostname, CertificateUtils.truncateFingerprint(actualFingerprint), expectedFingerprints.size());
             return ScittVerificationResult.mismatch(
                 actualFingerprint,
                 "Certificate fingerprint does not match any expected fingerprint");
@@ -192,6 +207,32 @@ public class DefaultScittVerifier implements ScittVerifier {
             LOGGER.error("Error computing certificate fingerprint: {}", e.getMessage());
             return ScittVerificationResult.error("Error computing fingerprint: " + e.getMessage());
         }
+    }
+
+    /**
+     * Validates the issuer (iss) CWT claim against the expected transparency log domain.
+     *
+     * @param header the COSE protected header containing CWT claims
+     * @param artifactType description for logging (e.g., "Receipt", "Status token")
+     * @return error message if validation fails, null if valid
+     */
+    private String validateIssuer(CoseProtectedHeader header, String artifactType) {
+        if (header == null || header.cwtClaims() == null) {
+            LOGGER.warn("{} missing CWT claims — cannot validate issuer", artifactType);
+            return artifactType + " missing CWT claims (expected issuer '" + expectedIssuer + "')";
+        }
+        String iss = header.cwtClaims().iss();
+        if (iss == null) {
+            LOGGER.warn("{} missing issuer claim — expected '{}'", artifactType, expectedIssuer);
+            return artifactType + " missing issuer claim (expected '" + expectedIssuer + "')";
+        }
+        if (!expectedIssuer.equals(iss)) {
+            LOGGER.warn("{} issuer mismatch: expected '{}', got '{}'",
+                artifactType, expectedIssuer, iss);
+            return artifactType + " issuer mismatch: expected '" + expectedIssuer
+                + "', got '" + iss + "'";
+        }
+        return null;
     }
 
     /**
@@ -289,141 +330,13 @@ public class DefaultScittVerifier implements ScittVerifier {
      * @return true if signature is valid
      */
     private boolean verifyEs256Signature(byte[] data, byte[] signature, PublicKey publicKey) throws Exception {
-        // Convert IEEE P1363 format to DER format for Java's Signature API
-        byte[] derSignature = convertP1363ToDer(signature);
-
-        return CryptoCache.verifyEs256(data, derSignature, publicKey);
-    }
-
-    /**
-     * Converts an ECDSA signature from IEEE P1363 format (r || s) to DER format.
-     *
-     * <p>Java's Signature API expects DER-encoded signatures, but COSE uses
-     * the IEEE P1363 format (fixed-size concatenation of r and s).</p>
-     */
-    private byte[] convertP1363ToDer(byte[] p1363Signature) {
-        if (p1363Signature.length != 64) {
-            throw new IllegalArgumentException("Expected 64-byte P1363 signature, got " + p1363Signature.length);
-        }
-
-        // Split into r and s (each 32 bytes for P-256)
-        byte[] r = new byte[32];
-        byte[] s = new byte[32];
-        System.arraycopy(p1363Signature, 0, r, 0, 32);
-        System.arraycopy(p1363Signature, 32, s, 0, 32);
-
-        // Convert to DER format
-        return toDerSignature(r, s);
-    }
-
-    /**
-     * Encodes r and s as a DER SEQUENCE of two INTEGERs.
-     */
-    private byte[] toDerSignature(byte[] r, byte[] s) {
-        byte[] rDer = toDerInteger(r);
-        byte[] sDer = toDerInteger(s);
-
-        // SEQUENCE { r INTEGER, s INTEGER }
-        int totalLen = rDer.length + sDer.length;
-        byte[] der;
-
-        if (totalLen < 128) {
-            der = new byte[2 + totalLen];
-            der[0] = 0x30;  // SEQUENCE
-            der[1] = (byte) totalLen;
-            System.arraycopy(rDer, 0, der, 2, rDer.length);
-            System.arraycopy(sDer, 0, der, 2 + rDer.length, sDer.length);
-        } else {
-            der = new byte[3 + totalLen];
-            der[0] = 0x30;  // SEQUENCE
-            der[1] = (byte) 0x81;  // Long form length
-            der[2] = (byte) totalLen;
-            System.arraycopy(rDer, 0, der, 3, rDer.length);
-            System.arraycopy(sDer, 0, der, 3 + rDer.length, sDer.length);
-        }
-
-        return der;
-    }
-
-    /**
-     * Encodes a big integer value as a DER INTEGER.
-     */
-    private byte[] toDerInteger(byte[] value) {
-        // Skip leading zeros but ensure at least one byte
-        int start = 0;
-        while (start < value.length - 1 && value[start] == 0) {
-            start++;
-        }
-
-        // Check if we need a leading zero (if high bit is set)
-        boolean needLeadingZero = (value[start] & 0x80) != 0;
-
-        int length = value.length - start;
-        if (needLeadingZero) {
-            length++;
-        }
-
-        byte[] der = new byte[2 + length];
-        der[0] = 0x02;  // INTEGER
-        der[1] = (byte) length;
-
-        if (needLeadingZero) {
-            der[2] = 0x00;
-            System.arraycopy(value, start, der, 3, value.length - start);
-        } else {
-            System.arraycopy(value, start, der, 2, value.length - start);
-        }
-
-        return der;
+        return CryptoCache.verifyEs256P1363(data, signature, publicKey);
     }
 
     /**
      * Computes the SHA-256 fingerprint of an X.509 certificate.
      */
     private String computeCertificateFingerprint(X509Certificate cert) throws Exception {
-        byte[] digest = CryptoCache.sha256(cert.getEncoded());
-        return bytesToHex(digest);
-    }
-
-    /**
-     * Compares two fingerprints using constant-time comparison.
-     *
-     * <p>Normalizes fingerprints to lowercase hex without colons before comparison.</p>
-     */
-    private boolean fingerprintMatches(String actual, String expected) {
-        if (actual == null || expected == null) {
-            return false;
-        }
-
-        // Normalize: lowercase, remove colons and "SHA256:" prefix
-        String normalizedActual = normalizeFingerprint(actual);
-        String normalizedExpected = normalizeFingerprint(expected);
-
-        if (normalizedActual.length() != normalizedExpected.length()) {
-            return false;
-        }
-
-        // SECURITY: Constant-time comparison
-        byte[] actualBytes = normalizedActual.getBytes();
-        byte[] expectedBytes = normalizedExpected.getBytes();
-        return MessageDigest.isEqual(actualBytes, expectedBytes);
-    }
-
-    private String normalizeFingerprint(String fingerprint) {
-        String normalized = fingerprint.toLowerCase()
-            .replace("sha256:", "")  // Remove prefix first
-            .replace(":", "");        // Then remove colons
-        return normalized;
-    }
-
-    private static String bytesToHex(byte[] bytes) {
-        return Hex.toHexString(bytes);
-    }
-
-    private static String truncateFingerprint(String fingerprint) {
-        if (fingerprint == null || fingerprint.length() <= 16) {
-            return fingerprint;
-        }
-        return fingerprint.substring(0, 16) + "...";
+        return CertificateUtils.bytesToHex(CryptoCache.sha256(cert.getEncoded()));
     }
 }

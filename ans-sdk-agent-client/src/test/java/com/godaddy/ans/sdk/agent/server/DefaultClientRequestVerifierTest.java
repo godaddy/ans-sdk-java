@@ -1,8 +1,9 @@
-package com.godaddy.ans.sdk.agent.verification;
+package com.godaddy.ans.sdk.agent.server;
 
 import com.godaddy.ans.sdk.agent.VerificationMode;
 import com.godaddy.ans.sdk.agent.VerificationPolicy;
 import com.godaddy.ans.sdk.crypto.CertificateUtils;
+import com.godaddy.ans.sdk.agent.verification.VerificationTestHelpers;
 import com.godaddy.ans.sdk.transparency.TransparencyClient;
 import com.godaddy.ans.sdk.transparency.scitt.DefaultScittHeaderProvider;
 import com.godaddy.ans.sdk.transparency.scitt.ScittExpectation;
@@ -11,14 +12,17 @@ import com.godaddy.ans.sdk.transparency.scitt.ScittReceipt;
 import com.godaddy.ans.sdk.transparency.scitt.ScittVerifier;
 import com.godaddy.ans.sdk.transparency.scitt.StatusToken;
 import com.upokecenter.cbor.CBORObject;
+import org.bouncycastle.asn1.x500.X500Name;
+import org.bouncycastle.cert.X509CertificateHolder;
+import org.bouncycastle.cert.X509v3CertificateBuilder;
+import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
+import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
+import org.bouncycastle.operator.ContentSigner;
+import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
-
-import com.godaddy.ans.sdk.crypto.CryptoCache;
-
-import org.bouncycastle.util.encoders.Hex;
 
 import java.math.BigInteger;
 import java.security.KeyPair;
@@ -27,12 +31,14 @@ import java.security.PublicKey;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Arrays;
 import java.util.Base64;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -43,7 +49,13 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-class ClientRequestVerifierTest {
+/**
+ * Tests for {@link DefaultClientRequestVerifier}.
+ *
+ * <p>Covers input validation, SCITT verification, caching behavior,
+ * DoS protection, and error handling paths.</p>
+ */
+class DefaultClientRequestVerifierTest {
 
     private TransparencyClient mockTransparencyClient;
     private ScittVerifier mockScittVerifier;
@@ -55,16 +67,13 @@ class ClientRequestVerifierTest {
     @BeforeEach
     void setUp() throws Exception {
         mockTransparencyClient = mock(TransparencyClient.class);
+        when(mockTransparencyClient.getBaseUrl()).thenReturn("https://transparency.test.example.com");
         mockScittVerifier = mock(ScittVerifier.class);
         mockClientCert = createMockCertificate();
         clientCertFingerprint = CertificateUtils.computeSha256Fingerprint(mockClientCert);
 
-        // Generate test key pair for root key mock
-        KeyPairGenerator keyGen = KeyPairGenerator.getInstance("EC");
-        keyGen.initialize(256);
-        testKeyPair = keyGen.generateKeyPair();
+        testKeyPair = VerificationTestHelpers.generateEcKeyPair();
 
-        // Setup mock TransparencyClient
         when(mockTransparencyClient.getRootKeysAsync()).thenReturn(
             CompletableFuture.completedFuture(toRootKeys(testKeyPair.getPublic())));
 
@@ -76,15 +85,8 @@ class ClientRequestVerifierTest {
             .build();
     }
 
-    /**
-     * Helper to convert a PublicKey to a Map keyed by hex key ID.
-     */
     private Map<String, PublicKey> toRootKeys(PublicKey publicKey) {
-        byte[] hash = CryptoCache.sha256(publicKey.getEncoded());
-        String hexKeyId = Hex.toHexString(Arrays.copyOf(hash, 4));
-        Map<String, PublicKey> map = new HashMap<>();
-        map.put(hexKeyId, publicKey);
-        return map;
+        return VerificationTestHelpers.toRootKeys(publicKey);
     }
 
     @Nested
@@ -157,11 +159,9 @@ class ClientRequestVerifierTest {
         @Test
         @DisplayName("Should verify valid SCITT artifacts with matching certificate")
         void shouldVerifyValidArtifacts() throws Exception {
-            // Setup mock SCITT verification to return success with matching identity cert
             ScittExpectation expectation = ScittExpectation.verified(
-                List.of(), // server certs (not used for client verification)
-                List.of(clientCertFingerprint), // identity certs - must match client cert
-                "agent.example.com",
+                List.of(),
+                List.of(clientCertFingerprint),
                 "test.ans",
                 Map.of(),
                 createMockStatusToken("test-agent")
@@ -187,7 +187,6 @@ class ClientRequestVerifierTest {
             ScittExpectation expectation = ScittExpectation.verified(
                 List.of(),
                 List.of(clientCertFingerprint),
-                "agent.example.com",
                 "test.ans",
                 Map.of(),
                 createMockStatusToken("test-agent")
@@ -196,25 +195,21 @@ class ClientRequestVerifierTest {
 
             Map<String, String> headers = createValidScittHeaders();
 
-            // First call
             ClientRequestVerificationResult result1 = verifier
                 .verify(mockClientCert, headers, VerificationPolicy.SCITT_REQUIRED)
                 .get(5, TimeUnit.SECONDS);
 
-            // Second call with same inputs should use cache
             ClientRequestVerificationResult result2 = verifier
                 .verify(mockClientCert, headers, VerificationPolicy.SCITT_REQUIRED)
                 .get(5, TimeUnit.SECONDS);
 
             assertThat(result1.verified()).isTrue();
             assertThat(result2.verified()).isTrue();
-            // Both should succeed (cache hit on second call)
         }
 
         @Test
         @DisplayName("Should invalidate cache when token expires before cache TTL")
         void shouldInvalidateCacheWhenTokenExpires() throws Exception {
-            // Create a token that expires in 100ms - much shorter than cache TTL
             Instant shortExpiry = Instant.now().plusMillis(100);
             StatusToken shortLivedToken = createMockStatusTokenWithExpiry(
                 "test-agent", shortExpiry);
@@ -222,35 +217,28 @@ class ClientRequestVerifierTest {
             ScittExpectation expectation = ScittExpectation.verified(
                 List.of(),
                 List.of(clientCertFingerprint),
-                "agent.example.com",
                 "test.ans",
                 Map.of(),
                 shortLivedToken
             );
             when(mockScittVerifier.verify(any(), any(), any())).thenReturn(expectation);
 
-            // Headers must also use short expiry - the token parsed from headers is used for cache TTL
             Map<String, String> headers = createValidScittHeadersWithExpiry(shortExpiry);
 
-            // First call - should succeed and cache
             ClientRequestVerificationResult result1 = verifier
                 .verify(mockClientCert, headers, VerificationPolicy.SCITT_REQUIRED)
                 .get(5, TimeUnit.SECONDS);
             assertThat(result1.verified()).isTrue();
 
-            // Verify scittVerifier was called once
             verify(mockScittVerifier, times(1)).verify(any(), any(), any());
 
-            // Wait for token to expire (cache TTL is 5 minutes, token expires in 100ms)
             Thread.sleep(150);
 
-            // Second call - token expired, should NOT use cache, should re-verify
             ClientRequestVerificationResult result2 = verifier
                 .verify(mockClientCert, headers, VerificationPolicy.SCITT_REQUIRED)
                 .get(5, TimeUnit.SECONDS);
             assertThat(result2.verified()).isTrue();
 
-            // Verify scittVerifier was called twice (cache was invalidated due to token expiry)
             verify(mockScittVerifier, times(2)).verify(any(), any(), any());
         }
     }
@@ -262,11 +250,9 @@ class ClientRequestVerifierTest {
         @Test
         @DisplayName("Should fail when certificate fingerprint does not match identity certs")
         void shouldFailOnFingerprintMismatch() throws Exception {
-            // Return expectation with different identity cert fingerprint
             ScittExpectation expectation = ScittExpectation.verified(
                 List.of(),
-                List.of("SHA256:different-fingerprint"), // Won't match client cert
-                "agent.example.com",
+                List.of("SHA256:different-fingerprint"),
                 "test.ans",
                 Map.of(),
                 createMockStatusToken("test-agent")
@@ -288,8 +274,7 @@ class ClientRequestVerifierTest {
         void shouldFailWhenNoIdentityCerts() throws Exception {
             ScittExpectation expectation = ScittExpectation.verified(
                 List.of("SHA256:some-server-cert"),
-                List.of(), // No identity certs
-                "agent.example.com",
+                List.of(),
                 "test.ans",
                 Map.of(),
                 createMockStatusToken("test-agent")
@@ -394,6 +379,237 @@ class ClientRequestVerifierTest {
     }
 
     @Nested
+    @DisplayName("DoS protection tests")
+    class DoSProtectionTests {
+
+        @Test
+        @DisplayName("Should fail when receipt header exceeds size limit")
+        void shouldFailWhenReceiptHeaderExceedsSizeLimit() throws Exception {
+            String oversizedHeader = "A".repeat(65 * 1024);
+            Map<String, String> headers = new HashMap<>();
+            headers.put(ScittHeaders.SCITT_RECEIPT_HEADER, oversizedHeader);
+            headers.put(ScittHeaders.STATUS_TOKEN_HEADER,
+                Base64.getEncoder().encodeToString(createValidStatusTokenBytes()));
+
+            ClientRequestVerificationResult result = verifier
+                .verify(mockClientCert, headers, VerificationPolicy.SCITT_REQUIRED)
+                .get(5, TimeUnit.SECONDS);
+
+            assertThat(result.verified()).isFalse();
+            assertThat(result.errors()).anyMatch(e -> e.contains("exceeds size limit"));
+        }
+
+        @Test
+        @DisplayName("Should fail when status token header exceeds size limit")
+        void shouldFailWhenStatusTokenHeaderExceedsSizeLimit() throws Exception {
+            String oversizedHeader = "B".repeat(65 * 1024);
+            Map<String, String> headers = new HashMap<>();
+            headers.put(ScittHeaders.SCITT_RECEIPT_HEADER,
+                Base64.getEncoder().encodeToString(createValidReceiptBytes()));
+            headers.put(ScittHeaders.STATUS_TOKEN_HEADER, oversizedHeader);
+
+            ClientRequestVerificationResult result = verifier
+                .verify(mockClientCert, headers, VerificationPolicy.SCITT_REQUIRED)
+                .get(5, TimeUnit.SECONDS);
+
+            assertThat(result.verified()).isFalse();
+            assertThat(result.errors()).anyMatch(e -> e.contains("exceeds size limit"));
+        }
+
+        @Test
+        @DisplayName("Should accept headers just under size limit")
+        void shouldAcceptHeadersJustUnderSizeLimit() throws Exception {
+            ScittExpectation expectation = ScittExpectation.verified(
+                List.of(),
+                List.of(clientCertFingerprint),
+                "test.ans",
+                Map.of(),
+                createMockStatusToken("test-agent")
+            );
+            when(mockScittVerifier.verify(any(), any(), any())).thenReturn(expectation);
+
+            String largeButValidReceipt = "A".repeat(64 * 1024 - 1);
+            Map<String, String> headers = new HashMap<>();
+            headers.put(ScittHeaders.SCITT_RECEIPT_HEADER, largeButValidReceipt);
+            headers.put(ScittHeaders.STATUS_TOKEN_HEADER,
+                Base64.getEncoder().encodeToString(createValidStatusTokenBytes()));
+
+            ClientRequestVerificationResult result = verifier
+                .verify(mockClientCert, headers, VerificationPolicy.SCITT_REQUIRED)
+                .get(5, TimeUnit.SECONDS);
+
+            assertThat(result.errors()).noneMatch(e -> e.contains("exceeds size limit"));
+        }
+    }
+
+    @Nested
+    @DisplayName("Async error handling tests")
+    class AsyncErrorHandlingTests {
+
+        @Test
+        @DisplayName("Should handle root key fetch failure")
+        void shouldHandleRootKeyFetchFailure() throws Exception {
+            when(mockTransparencyClient.getRootKeysAsync())
+                .thenReturn(CompletableFuture.failedFuture(
+                    new RuntimeException("Network error")));
+
+            Map<String, String> headers = createValidScittHeaders();
+
+            ClientRequestVerificationResult result = verifier
+                .verify(mockClientCert, headers, VerificationPolicy.SCITT_REQUIRED)
+                .get(5, TimeUnit.SECONDS);
+
+            assertThat(result.verified()).isFalse();
+            assertThat(result.errors()).anyMatch(e ->
+                e.contains("Failed to fetch SCITT public keys") || e.contains("Network error"));
+        }
+
+        @Test
+        @DisplayName("Should handle unexpected exception during verification")
+        void shouldHandleUnexpectedExceptionDuringVerification() throws Exception {
+            when(mockTransparencyClient.getRootKeysAsync())
+                .thenReturn(CompletableFuture.completedFuture(toRootKeys(testKeyPair.getPublic())));
+            when(mockScittVerifier.verify(any(), any(), any()))
+                .thenThrow(new RuntimeException("Unexpected error"));
+
+            Map<String, String> headers = createValidScittHeaders();
+
+            ClientRequestVerificationResult result = verifier
+                .verify(mockClientCert, headers, VerificationPolicy.SCITT_REQUIRED)
+                .get(5, TimeUnit.SECONDS);
+
+            assertThat(result.verified()).isFalse();
+            assertThat(result.errors()).anyMatch(e -> e.contains("error"));
+        }
+    }
+
+    @Nested
+    @DisplayName("Fingerprint matching edge cases")
+    class FingerprintMatchingEdgeCaseTests {
+
+        @Test
+        @DisplayName("Should match fingerprint when present in multiple identity certs")
+        void shouldMatchFingerprintInMultipleIdentityCerts() throws Exception {
+            ScittExpectation expectation = ScittExpectation.verified(
+                List.of(),
+                List.of("SHA256:other-fp-1", clientCertFingerprint, "SHA256:other-fp-2"),
+                "test.ans",
+                Map.of(),
+                createMockStatusToken("test-agent")
+            );
+            when(mockScittVerifier.verify(any(), any(), any())).thenReturn(expectation);
+
+            Map<String, String> headers = createValidScittHeaders();
+
+            ClientRequestVerificationResult result = verifier
+                .verify(mockClientCert, headers, VerificationPolicy.SCITT_REQUIRED)
+                .get(5, TimeUnit.SECONDS);
+
+            assertThat(result.verified()).isTrue();
+        }
+
+        @Test
+        @DisplayName("Should match fingerprint with different case")
+        void shouldMatchFingerprintWithDifferentCase() throws Exception {
+            String upperCaseFingerprint = clientCertFingerprint.toUpperCase();
+
+            ScittExpectation expectation = ScittExpectation.verified(
+                List.of(),
+                List.of(upperCaseFingerprint),
+                "test.ans",
+                Map.of(),
+                createMockStatusToken("test-agent")
+            );
+            when(mockScittVerifier.verify(any(), any(), any())).thenReturn(expectation);
+
+            Map<String, String> headers = createValidScittHeaders();
+
+            ClientRequestVerificationResult result = verifier
+                .verify(mockClientCert, headers, VerificationPolicy.SCITT_REQUIRED)
+                .get(5, TimeUnit.SECONDS);
+
+            assertThat(result.verified()).isTrue();
+        }
+    }
+
+    @Nested
+    @DisplayName("Cache expiry edge cases")
+    class CacheExpiryEdgeCaseTests {
+
+        @Test
+        @DisplayName("Should use different cache keys for different certificates")
+        void shouldUseDifferentCacheKeysForDifferentCerts() throws Exception {
+            X509Certificate secondCert = createMockCertificate();
+            String secondFingerprint = CertificateUtils.computeSha256Fingerprint(secondCert);
+
+            // Use Answer to return appropriate expectation based on which cert is being verified
+            when(mockScittVerifier.verify(any(), any(), any())).thenAnswer(invocation -> {
+                // Return expectation that matches whichever fingerprint we're checking
+                // Since both calls use the same headers, the verifier is called for both
+                return ScittExpectation.verified(
+                    List.of(),
+                    List.of(clientCertFingerprint, secondFingerprint),
+                    "test.ans",
+                    Map.of(),
+                    createMockStatusToken("test-agent")
+                );
+            });
+
+            Map<String, String> headers = createValidScittHeaders();
+
+            ClientRequestVerificationResult result1 = verifier
+                .verify(mockClientCert, headers, VerificationPolicy.SCITT_REQUIRED)
+                .get(5, TimeUnit.SECONDS);
+
+            ClientRequestVerificationResult result2 = verifier
+                .verify(secondCert, headers, VerificationPolicy.SCITT_REQUIRED)
+                .get(5, TimeUnit.SECONDS);
+
+            // Both should succeed
+            assertThat(result1.verified()).isTrue();
+            assertThat(result2.verified()).isTrue();
+            // Critical: mock should be called twice - different cert fingerprints mean different cache keys
+            verify(mockScittVerifier, times(2)).verify(any(), any(), any());
+        }
+    }
+
+    @Nested
+    @DisplayName("Agent status variations")
+    class AgentStatusVariationsTests {
+
+        @Test
+        @DisplayName("Should fail when agent status is inactive")
+        void shouldFailWhenAgentStatusIsInactive() throws Exception {
+            when(mockScittVerifier.verify(any(), any(), any()))
+                .thenReturn(ScittExpectation.inactive(StatusToken.Status.DEPRECATED, "test.ans"));
+
+            Map<String, String> headers = createValidScittHeaders();
+
+            ClientRequestVerificationResult result = verifier
+                .verify(mockClientCert, headers, VerificationPolicy.SCITT_REQUIRED)
+                .get(5, TimeUnit.SECONDS);
+
+            assertThat(result.verified()).isFalse();
+        }
+
+        @Test
+        @DisplayName("Should fail when key not found")
+        void shouldFailWhenKeyNotFound() throws Exception {
+            when(mockScittVerifier.verify(any(), any(), any()))
+                .thenReturn(ScittExpectation.keyNotFound("Required key ID not in registry"));
+
+            Map<String, String> headers = createValidScittHeaders();
+
+            ClientRequestVerificationResult result = verifier
+                .verify(mockClientCert, headers, VerificationPolicy.SCITT_REQUIRED)
+                .get(5, TimeUnit.SECONDS);
+
+            assertThat(result.verified()).isFalse();
+            assertThat(result.errors()).anyMatch(e -> e.contains("SCITT verification failed"));
+        }
+    }
+
+    @Nested
     @DisplayName("ClientRequestVerificationResult tests")
     class ResultTests {
 
@@ -418,7 +634,7 @@ class ClientRequestVerifierTest {
             ClientRequestVerificationResult result = ClientRequestVerificationResult.success(
                 "test-agent",
                 createMockStatusToken("test-agent"),
-                null, // no receipt
+                null,
                 mockClientCert,
                 VerificationPolicy.SCITT_REQUIRED,
                 Duration.ofMillis(100)
@@ -519,9 +735,21 @@ class ClientRequestVerifierTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("must be positive");
         }
+
+        @Test
+        @DisplayName("Should build with custom executor")
+        void shouldBuildWithCustomExecutor() {
+            Executor customExecutor = Executors.newSingleThreadExecutor();
+            DefaultClientRequestVerifier verifier = DefaultClientRequestVerifier.builder()
+                .transparencyClient(mockTransparencyClient)
+                .executor(customExecutor)
+                .build();
+
+            assertThat(verifier).isNotNull();
+        }
     }
 
-    // Helper methods
+    // ==================== Helper Methods ====================
 
     private Map<String, String> createValidScittHeaders() {
         return createValidScittHeadersWithExpiry(Instant.now().plusSeconds(3600));
@@ -539,8 +767,8 @@ class ClientRequestVerifierTest {
 
     private byte[] createValidReceiptBytes() {
         CBORObject protectedHeader = CBORObject.NewMap();
-        protectedHeader.Add(1, -7);  // alg = ES256
-        protectedHeader.Add(395, 1);  // vds = RFC9162_SHA256
+        protectedHeader.Add(1, -7);
+        protectedHeader.Add(395, 1);
         byte[] protectedBytes = protectedHeader.EncodeToBytes();
 
         CBORObject inclusionProofMap = CBORObject.NewMap();
@@ -560,6 +788,10 @@ class ClientRequestVerifierTest {
         CBORObject tagged = CBORObject.FromObjectAndTag(array, 18);
 
         return tagged.EncodeToBytes();
+    }
+
+    private byte[] createValidStatusTokenBytes() {
+        return createValidStatusTokenBytesWithExpiry(Instant.now().plusSeconds(3600));
     }
 
     private byte[] createValidStatusTokenBytesWithExpiry(Instant expiresAt) {
@@ -586,34 +818,28 @@ class ClientRequestVerifierTest {
     }
 
     private X509Certificate createMockCertificate() throws Exception {
-        // Generate a self-signed certificate for testing
         KeyPairGenerator keyGen = KeyPairGenerator.getInstance("EC");
         keyGen.initialize(256);
         KeyPair keyPair = keyGen.generateKeyPair();
 
-        // Use BouncyCastle to create a self-signed certificate
-        org.bouncycastle.asn1.x500.X500Name subject =
-            new org.bouncycastle.asn1.x500.X500Name("CN=Test Agent");
+        X500Name subject = new X500Name("CN=Test Agent");
         BigInteger serial = BigInteger.valueOf(System.currentTimeMillis());
         Instant now = Instant.now();
 
-        org.bouncycastle.cert.X509v3CertificateBuilder certBuilder =
-            new org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder(
-                subject,
-                serial,
-                java.util.Date.from(now.minusSeconds(3600)),
-                java.util.Date.from(now.plusSeconds(86400)),
-                subject,
-                keyPair.getPublic()
-            );
+        X509v3CertificateBuilder certBuilder = new JcaX509v3CertificateBuilder(
+            subject,
+            serial,
+            Date.from(now.minusSeconds(3600)),
+            Date.from(now.plusSeconds(86400)),
+            subject,
+            keyPair.getPublic()
+        );
 
-        org.bouncycastle.operator.ContentSigner signer =
-            new org.bouncycastle.operator.jcajce.JcaContentSignerBuilder("SHA256withECDSA")
-                .build(keyPair.getPrivate());
+        ContentSigner signer = new JcaContentSignerBuilder("SHA256withECDSA")
+            .build(keyPair.getPrivate());
 
-        org.bouncycastle.cert.X509CertificateHolder certHolder = certBuilder.build(signer);
-        return new org.bouncycastle.cert.jcajce.JcaX509CertificateConverter()
-            .getCertificate(certHolder);
+        X509CertificateHolder certHolder = certBuilder.build(signer);
+        return new JcaX509CertificateConverter().getCertificate(certHolder);
     }
 
     private StatusToken createMockStatusToken(String agentId) {
@@ -627,13 +853,9 @@ class ClientRequestVerifierTest {
             Instant.now(),
             expiresAt,
             agentId + ".ans",
-            "agent.example.com",
             List.of(),
             List.of(),
             Map.of(),
-            null,
-            null,
-            null,
             null
         );
     }

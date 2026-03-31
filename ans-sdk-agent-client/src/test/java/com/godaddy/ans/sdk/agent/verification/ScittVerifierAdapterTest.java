@@ -12,18 +12,10 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
-import com.godaddy.ans.sdk.crypto.CryptoCache;
-
-import org.bouncycastle.util.encoders.Hex;
-
 import java.security.KeyPair;
-import java.security.KeyPairGenerator;
 import java.security.PublicKey;
 import java.security.cert.X509Certificate;
-import java.security.spec.ECGenParameterSpec;
 import java.time.Duration;
-import java.util.Arrays;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -49,25 +41,20 @@ class ScittVerifierAdapterTest {
     @BeforeEach
     void setUp() throws Exception {
         mockTransparencyClient = mock(TransparencyClient.class);
+        when(mockTransparencyClient.getBaseUrl()).thenReturn("https://transparency.test.example.com");
         mockScittVerifier = mock(ScittVerifier.class);
         mockHeaderProvider = mock(ScittHeaderProvider.class);
         directExecutor = Runnable::run; // Synchronous executor for testing
 
         // Generate test key pair
-        KeyPairGenerator keyGen = KeyPairGenerator.getInstance("EC");
-        keyGen.initialize(new ECGenParameterSpec("secp256r1"));
-        testKeyPair = keyGen.generateKeyPair();
+        testKeyPair = VerificationTestHelpers.generateEcKeyPair();
     }
 
     /**
      * Helper to convert a PublicKey to a Map keyed by hex key ID.
      */
     private Map<String, PublicKey> toRootKeys(PublicKey publicKey) {
-        byte[] hash = CryptoCache.sha256(publicKey.getEncoded());
-        String hexKeyId = Hex.toHexString(Arrays.copyOf(hash, 4));
-        Map<String, PublicKey> map = new HashMap<>();
-        map.put(hexKeyId, publicKey);
-        return map;
+        return VerificationTestHelpers.toRootKeys(publicKey);
     }
 
     @Nested
@@ -188,7 +175,7 @@ class ScittVerifierAdapterTest {
         @DisplayName("Should return notPresent when artifacts are incomplete")
         void shouldReturnNotPresentWhenIncomplete() throws Exception {
             ScittHeaderProvider.ScittArtifacts incomplete =
-                new ScittHeaderProvider.ScittArtifacts(null, null, null, null);
+                new ScittHeaderProvider.ScittArtifacts(null, null);
             when(mockHeaderProvider.extractArtifacts(any())).thenReturn(Optional.of(incomplete));
 
             CompletableFuture<ScittPreVerifyResult> future = adapter.preVerify(Map.of());
@@ -203,14 +190,14 @@ class ScittVerifierAdapterTest {
             ScittReceipt receipt = mock(ScittReceipt.class);
             StatusToken token = mock(StatusToken.class);
             ScittHeaderProvider.ScittArtifacts artifacts =
-                new ScittHeaderProvider.ScittArtifacts(receipt, token, new byte[10], new byte[10]);
+                new ScittHeaderProvider.ScittArtifacts(receipt, token);
 
             when(mockHeaderProvider.extractArtifacts(any())).thenReturn(Optional.of(artifacts));
             when(mockTransparencyClient.getRootKeysAsync())
                 .thenReturn(CompletableFuture.completedFuture(toRootKeys(testKeyPair.getPublic())));
 
             ScittExpectation expectation = ScittExpectation.verified(
-                List.of("abc123"), List.of(), "host", "ans.test", Map.of(), null);
+                List.of("abc123"), List.of(), "ans.test", Map.of(), null);
             when(mockScittVerifier.verify(any(), any(), any())).thenReturn(expectation);
 
             CompletableFuture<ScittPreVerifyResult> future = adapter.preVerify(Map.of());
@@ -238,7 +225,7 @@ class ScittVerifierAdapterTest {
             ScittReceipt receipt = mock(ScittReceipt.class);
             StatusToken token = mock(StatusToken.class);
             ScittHeaderProvider.ScittArtifacts artifacts =
-                new ScittHeaderProvider.ScittArtifacts(receipt, token, new byte[10], new byte[10]);
+                new ScittHeaderProvider.ScittArtifacts(receipt, token);
 
             when(mockHeaderProvider.extractArtifacts(any())).thenReturn(Optional.of(artifacts));
             when(mockTransparencyClient.getRootKeysAsync())
@@ -258,7 +245,7 @@ class ScittVerifierAdapterTest {
             ScittReceipt receipt = mock(ScittReceipt.class);
             StatusToken token = mock(StatusToken.class);
             ScittHeaderProvider.ScittArtifacts artifacts =
-                new ScittHeaderProvider.ScittArtifacts(receipt, token, new byte[10], new byte[10]);
+                new ScittHeaderProvider.ScittArtifacts(receipt, token);
 
             when(mockHeaderProvider.extractArtifacts(any())).thenReturn(Optional.of(artifacts));
             when(mockTransparencyClient.getRootKeysAsync())
@@ -278,7 +265,7 @@ class ScittVerifierAdapterTest {
             StatusToken token = mock(StatusToken.class);
             when(token.issuedAt()).thenReturn(java.time.Instant.now().minusSeconds(3600));
             ScittHeaderProvider.ScittArtifacts artifacts =
-                new ScittHeaderProvider.ScittArtifacts(receipt, token, new byte[10], new byte[10]);
+                new ScittHeaderProvider.ScittArtifacts(receipt, token);
 
             when(mockHeaderProvider.extractArtifacts(any())).thenReturn(Optional.of(artifacts));
             when(mockTransparencyClient.getRootKeysAsync())
@@ -289,7 +276,8 @@ class ScittVerifierAdapterTest {
 
             com.godaddy.ans.sdk.transparency.scitt.RefreshDecision rejectDecision =
                 com.godaddy.ans.sdk.transparency.scitt.RefreshDecision.reject("Too old");
-            when(mockTransparencyClient.refreshRootKeysIfNeeded(any())).thenReturn(rejectDecision);
+            when(mockTransparencyClient.refreshRootKeysIfNeeded(any()))
+                .thenReturn(CompletableFuture.completedFuture(rejectDecision));
 
             CompletableFuture<ScittPreVerifyResult> future = adapter.preVerify(Map.of());
 
@@ -304,7 +292,7 @@ class ScittVerifierAdapterTest {
             StatusToken token = mock(StatusToken.class);
             when(token.issuedAt()).thenReturn(java.time.Instant.now());
             ScittHeaderProvider.ScittArtifacts artifacts =
-                new ScittHeaderProvider.ScittArtifacts(receipt, token, new byte[10], new byte[10]);
+                new ScittHeaderProvider.ScittArtifacts(receipt, token);
 
             when(mockHeaderProvider.extractArtifacts(any())).thenReturn(Optional.of(artifacts));
             when(mockTransparencyClient.getRootKeysAsync())
@@ -315,7 +303,8 @@ class ScittVerifierAdapterTest {
 
             com.godaddy.ans.sdk.transparency.scitt.RefreshDecision deferDecision =
                 com.godaddy.ans.sdk.transparency.scitt.RefreshDecision.defer("Cooldown active");
-            when(mockTransparencyClient.refreshRootKeysIfNeeded(any())).thenReturn(deferDecision);
+            when(mockTransparencyClient.refreshRootKeysIfNeeded(any()))
+                .thenReturn(CompletableFuture.completedFuture(deferDecision));
 
             CompletableFuture<ScittPreVerifyResult> future = adapter.preVerify(Map.of());
 
@@ -330,7 +319,7 @@ class ScittVerifierAdapterTest {
             StatusToken token = mock(StatusToken.class);
             when(token.issuedAt()).thenReturn(java.time.Instant.now());
             ScittHeaderProvider.ScittArtifacts artifacts =
-                new ScittHeaderProvider.ScittArtifacts(receipt, token, new byte[10], new byte[10]);
+                new ScittHeaderProvider.ScittArtifacts(receipt, token);
 
             when(mockHeaderProvider.extractArtifacts(any())).thenReturn(Optional.of(artifacts));
             when(mockTransparencyClient.getRootKeysAsync())
@@ -338,7 +327,7 @@ class ScittVerifierAdapterTest {
 
             ScittExpectation keyNotFound = ScittExpectation.keyNotFound("unknown-key-id");
             ScittExpectation verified = ScittExpectation.verified(
-                List.of("abc123"), List.of(), "host", "ans.test", Map.of(), null);
+                List.of("abc123"), List.of(), "ans.test", Map.of(), null);
             when(mockScittVerifier.verify(any(), any(), any()))
                 .thenReturn(keyNotFound)
                 .thenReturn(verified);
@@ -346,7 +335,8 @@ class ScittVerifierAdapterTest {
             Map<String, PublicKey> freshKeys = toRootKeys(testKeyPair.getPublic());
             com.godaddy.ans.sdk.transparency.scitt.RefreshDecision refreshedDecision =
                 com.godaddy.ans.sdk.transparency.scitt.RefreshDecision.refreshed(freshKeys);
-            when(mockTransparencyClient.refreshRootKeysIfNeeded(any())).thenReturn(refreshedDecision);
+            when(mockTransparencyClient.refreshRootKeysIfNeeded(any()))
+                .thenReturn(CompletableFuture.completedFuture(refreshedDecision));
 
             CompletableFuture<ScittPreVerifyResult> future = adapter.preVerify(Map.of());
 
@@ -362,7 +352,7 @@ class ScittVerifierAdapterTest {
             when(token.issuedAt()).thenReturn(null);
             when(receipt.protectedHeader()).thenReturn(null);
             ScittHeaderProvider.ScittArtifacts artifacts =
-                new ScittHeaderProvider.ScittArtifacts(receipt, token, new byte[10], new byte[10]);
+                new ScittHeaderProvider.ScittArtifacts(receipt, token);
 
             when(mockHeaderProvider.extractArtifacts(any())).thenReturn(Optional.of(artifacts));
             when(mockTransparencyClient.getRootKeysAsync())
@@ -451,7 +441,7 @@ class ScittVerifierAdapterTest {
         void shouldReturnSuccessWhenPostVerificationSucceeds() {
             X509Certificate cert = mock(X509Certificate.class);
             ScittExpectation expectation = ScittExpectation.verified(
-                List.of("abc123"), List.of(), "host", "ans.test", Map.of(), null);
+                List.of("abc123"), List.of(), "ans.test", Map.of(), null);
             ScittPreVerifyResult preResult = ScittPreVerifyResult.verified(
                 expectation, mock(ScittReceipt.class), mock(StatusToken.class));
 
@@ -470,7 +460,7 @@ class ScittVerifierAdapterTest {
         void shouldReturnMismatchWhenPostVerificationFails() {
             X509Certificate cert = mock(X509Certificate.class);
             ScittExpectation expectation = ScittExpectation.verified(
-                List.of("expected123"), List.of(), "host", "ans.test", Map.of(), null);
+                List.of("expected123"), List.of(), "ans.test", Map.of(), null);
             ScittPreVerifyResult preResult = ScittPreVerifyResult.verified(
                 expectation, mock(ScittReceipt.class), mock(StatusToken.class));
 
@@ -489,7 +479,7 @@ class ScittVerifierAdapterTest {
         void shouldReturnMismatchWithUnknownWhenFingerprintsEmpty() {
             X509Certificate cert = mock(X509Certificate.class);
             ScittExpectation expectation = ScittExpectation.verified(
-                List.of(), List.of(), "host", "ans.test", Map.of(), null);
+                List.of(), List.of(), "ans.test", Map.of(), null);
             ScittPreVerifyResult preResult = ScittPreVerifyResult.verified(
                 expectation, mock(ScittReceipt.class), mock(StatusToken.class));
 

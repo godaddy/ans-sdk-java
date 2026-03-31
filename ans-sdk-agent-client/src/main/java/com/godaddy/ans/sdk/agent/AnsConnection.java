@@ -1,6 +1,6 @@
 package com.godaddy.ans.sdk.agent;
 
-import com.godaddy.ans.sdk.agent.http.CertificateCapturingTrustManager;
+import com.godaddy.ans.sdk.agent.http.CapturedCertificateProvider;
 import com.godaddy.ans.sdk.agent.verification.ConnectionVerifier;
 import com.godaddy.ans.sdk.agent.verification.PreVerificationResult;
 import com.godaddy.ans.sdk.agent.verification.VerificationResult;
@@ -46,6 +46,7 @@ public class AnsConnection implements AutoCloseable {
     private final PreVerificationResult preResult;
     private final ConnectionVerifier verifier;
     private final VerificationPolicy policy;
+    private final CapturedCertificateProvider certProvider;
 
     /**
      * Creates a new AnsConnection.
@@ -57,13 +58,16 @@ public class AnsConnection implements AutoCloseable {
      * @param preResult the pre-verification result
      * @param verifier the connection verifier
      * @param policy the verification policy
+     * @param certProvider the provider for captured server certificates
      */
     AnsConnection(String hostname, PreVerificationResult preResult,
-                  ConnectionVerifier verifier, VerificationPolicy policy) {
+                  ConnectionVerifier verifier, VerificationPolicy policy,
+                  CapturedCertificateProvider certProvider) {
         this.hostname = hostname;
         this.preResult = preResult;
         this.verifier = verifier;
         this.policy = policy;
+        this.certProvider = certProvider;
     }
 
     /**
@@ -122,7 +126,7 @@ public class AnsConnection implements AutoCloseable {
      * @throws SecurityException if no server certificate was captured
      */
     public VerificationResult verifyServer() {
-        X509Certificate[] certs = CertificateCapturingTrustManager.getCapturedCertificates(hostname);
+        X509Certificate[] certs = certProvider.getCapturedCertificates(hostname);
         if (certs == null || certs.length == 0) {
             throw new SecurityException("No server certificate captured for " + hostname);
         }
@@ -166,7 +170,7 @@ public class AnsConnection implements AutoCloseable {
      * @throws SecurityException if no server certificate was captured
      */
     public List<VerificationResult> verifyServerDetailed() {
-        X509Certificate[] certs = CertificateCapturingTrustManager.getCapturedCertificates(hostname);
+        X509Certificate[] certs = certProvider.getCapturedCertificates(hostname);
         if (certs == null || certs.length == 0) {
             throw new SecurityException("No server certificate captured for " + hostname);
         }
@@ -175,7 +179,7 @@ public class AnsConnection implements AutoCloseable {
 
     @Override
     public void close() {
-        CertificateCapturingTrustManager.clearCapturedCertificates(hostname);
+        certProvider.clearCapturedCertificates(hostname);
         LOGGER.debug("Cleared captured certificates for {}", hostname);
     }
 }

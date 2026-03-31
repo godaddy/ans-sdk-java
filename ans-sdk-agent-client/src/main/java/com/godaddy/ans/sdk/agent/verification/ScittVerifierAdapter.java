@@ -5,7 +5,6 @@ import com.godaddy.ans.sdk.transparency.TransparencyClient;
 import com.godaddy.ans.sdk.transparency.scitt.CwtClaims;
 import com.godaddy.ans.sdk.transparency.scitt.DefaultScittHeaderProvider;
 import com.godaddy.ans.sdk.transparency.scitt.DefaultScittVerifier;
-import com.godaddy.ans.sdk.transparency.scitt.RefreshDecision;
 import com.godaddy.ans.sdk.transparency.scitt.ScittExpectation;
 import com.godaddy.ans.sdk.transparency.scitt.ScittHeaderProvider;
 import com.godaddy.ans.sdk.transparency.scitt.ScittPreVerifyResult;
@@ -15,6 +14,7 @@ import com.godaddy.ans.sdk.transparency.scitt.StatusToken;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.net.URI;
 import java.security.PublicKey;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
@@ -73,7 +73,8 @@ public class ScittVerifierAdapter {
      * post-verification of the TLS certificate. The domain is automatically
      * derived from the TransparencyClient configuration.</p>
      *
-     * @param responseHeaders the HTTP response headers
+     * @param responseHeaders the HTTP response headers (keys must be lowercase,
+     *        e.g., {@code x-scitt-receipt}, {@code x-ans-status-token})
      * @return future containing the pre-verification result
      */
     public CompletableFuture<ScittPreVerifyResult> preVerify(Map<String, String> responseHeaders) {
@@ -99,7 +100,7 @@ public class ScittVerifierAdapter {
 
         // Step 2: fetch keys asynchronously — uses transparencyClient's configured domain
         return transparencyClient.getRootKeysAsync()
-            .thenApplyAsync((Map<String, PublicKey> rootKeys) -> {
+            .thenComposeAsync((Map<String, PublicKey> rootKeys) -> {
                 try {
                     ScittExpectation expectation = scittVerifier.verify(receipt, token, rootKeys);
 
@@ -109,10 +110,12 @@ public class ScittVerifierAdapter {
                     }
 
                     LOGGER.debug("SCITT pre-verification result: {}", expectation.status());
-                    return ScittPreVerifyResult.verified(expectation, receipt, token);
+                    return CompletableFuture.completedFuture(
+                        ScittPreVerifyResult.verified(expectation, receipt, token));
                 } catch (RuntimeException e) {
                     LOGGER.error("SCITT verification error: {}", e.getMessage(), e);
-                    return ScittPreVerifyResult.parseError("Verification error: " + e.getMessage());
+                    return CompletableFuture.completedFuture(
+                        ScittPreVerifyResult.parseError("Verification error: " + e.getMessage()));
                 }
             }, executor)
             .exceptionally(e -> {
@@ -134,7 +137,7 @@ public class ScittVerifierAdapter {
      *   <li>Retries verification once with refreshed keys</li>
      * </ul>
      */
-    private ScittPreVerifyResult handleKeyNotFound(
+    private CompletableFuture<ScittPreVerifyResult> handleKeyNotFound(
             ScittReceipt receipt,
             StatusToken token,
             ScittExpectation originalExpectation) {
@@ -143,37 +146,39 @@ public class ScittVerifierAdapter {
         Instant artifactIssuedAt = getArtifactIssuedAt(receipt, token);
         if (artifactIssuedAt == null) {
             LOGGER.warn("Cannot determine artifact issued-at time, failing verification");
-            return ScittPreVerifyResult.verified(originalExpectation, receipt, token);
+            return CompletableFuture.completedFuture(
+                ScittPreVerifyResult.verified(originalExpectation, receipt, token));
         }
 
         LOGGER.debug("Key not found, checking if cache refresh is needed (artifact iat={})", artifactIssuedAt);
 
-        // Attempt refresh with security checks
-        RefreshDecision decision = transparencyClient.refreshRootKeysIfNeeded(artifactIssuedAt);
+        // Attempt refresh with security checks asynchronously
+        return transparencyClient.refreshRootKeysIfNeeded(artifactIssuedAt)
+            .thenApply(decision -> {
+                switch (decision.action()) {
+                    case REJECT:
+                        // Artifact is invalid (too old or from future) - return original error
+                        LOGGER.warn("Cache refresh rejected: {}", decision.reason());
+                        return ScittPreVerifyResult.verified(originalExpectation, receipt, token);
 
-        switch (decision.action()) {
-            case REJECT:
-                // Artifact is invalid (too old or from future) - return original error
-                LOGGER.warn("Cache refresh rejected: {}", decision.reason());
-                return ScittPreVerifyResult.verified(originalExpectation, receipt, token);
+                    case DEFER:
+                        // Cooldown in effect - return temporary failure
+                        LOGGER.info("Cache refresh deferred: {}", decision.reason());
+                        return ScittPreVerifyResult.parseError("Verification deferred: " + decision.reason());
 
-            case DEFER:
-                // Cooldown in effect - return temporary failure
-                LOGGER.info("Cache refresh deferred: {}", decision.reason());
-                return ScittPreVerifyResult.parseError("Verification deferred: " + decision.reason());
+                    case REFRESHED:
+                        // Retry verification with fresh keys
+                        LOGGER.info("Cache refreshed, retrying verification");
+                        Map<String, PublicKey> freshKeys = decision.keys();
+                        ScittExpectation retryExpectation = scittVerifier.verify(receipt, token, freshKeys);
+                        LOGGER.debug("Retry verification result: {}", retryExpectation.status());
+                        return ScittPreVerifyResult.verified(retryExpectation, receipt, token);
 
-            case REFRESHED:
-                // Retry verification with fresh keys
-                LOGGER.info("Cache refreshed, retrying verification");
-                Map<String, PublicKey> freshKeys = decision.keys();
-                ScittExpectation retryExpectation = scittVerifier.verify(receipt, token, freshKeys);
-                LOGGER.debug("Retry verification result: {}", retryExpectation.status());
-                return ScittPreVerifyResult.verified(retryExpectation, receipt, token);
-
-            default:
-                // Should never happen
-                return ScittPreVerifyResult.verified(originalExpectation, receipt, token);
-        }
+                    default:
+                        // Should never happen
+                        return ScittPreVerifyResult.verified(originalExpectation, receipt, token);
+                }
+            });
     }
 
     /**
@@ -303,7 +308,8 @@ public class ScittVerifierAdapter {
          */
         public ScittVerifierAdapter build() {
             Objects.requireNonNull(transparencyClient, "transparencyClient is required");
-            ScittVerifier verifier = new DefaultScittVerifier(clockSkewTolerance);
+            String expectedIssuer = URI.create(transparencyClient.getBaseUrl()).getHost();
+            ScittVerifier verifier = new DefaultScittVerifier(clockSkewTolerance, expectedIssuer);
             ScittHeaderProvider headerProvider = new DefaultScittHeaderProvider();
             return new ScittVerifierAdapter(transparencyClient, verifier, headerProvider, executor);
         }

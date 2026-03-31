@@ -6,7 +6,7 @@ package com.godaddy.ans.sdk.transparency.scitt;
  * <p>This exception is thrown when operations like fetching receipts or
  * status tokens from the transparency log encounter errors.</p>
  */
-public class ScittFetchException extends RuntimeException {
+public final class ScittFetchException extends RuntimeException {
 
     /**
      * The type of artifact that failed to fetch.

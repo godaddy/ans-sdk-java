@@ -781,7 +781,7 @@ class TransparencyServiceTest {
 
             // Try refresh with artifact claiming to be 2 minutes in the future (beyond 60s tolerance)
             Instant futureTime = Instant.now().plus(Duration.ofMinutes(2));
-            RefreshDecision decision = service.refreshRootKeysIfNeeded(futureTime);
+            RefreshDecision decision = service.refreshRootKeysIfNeeded(futureTime).join();
 
             assertThat(decision.action()).isEqualTo(RefreshDecision.RefreshAction.REJECT);
             assertThat(decision.reason()).contains("future");
@@ -805,7 +805,7 @@ class TransparencyServiceTest {
 
             // Try refresh with artifact from 10 minutes ago (beyond 5 min past tolerance)
             Instant oldTime = Instant.now().minus(Duration.ofMinutes(10));
-            RefreshDecision decision = service.refreshRootKeysIfNeeded(oldTime);
+            RefreshDecision decision = service.refreshRootKeysIfNeeded(oldTime).join();
 
             assertThat(decision.action()).isEqualTo(RefreshDecision.RefreshAction.REJECT);
             assertThat(decision.reason()).contains("predates cache refresh");
@@ -830,7 +830,7 @@ class TransparencyServiceTest {
 
             // Try refresh with artifact issued just now (after cache was populated)
             Instant recentTime = Instant.now();
-            RefreshDecision decision = service.refreshRootKeysIfNeeded(recentTime);
+            RefreshDecision decision = service.refreshRootKeysIfNeeded(recentTime).join();
 
             assertThat(decision.action()).isEqualTo(RefreshDecision.RefreshAction.REFRESHED);
             assertThat(decision.keys()).isNotNull();
@@ -858,11 +858,11 @@ class TransparencyServiceTest {
 
             // First refresh should succeed
             Instant recentTime = Instant.now();
-            RefreshDecision decision1 = service.refreshRootKeysIfNeeded(recentTime);
+            RefreshDecision decision1 = service.refreshRootKeysIfNeeded(recentTime).join();
             assertThat(decision1.action()).isEqualTo(RefreshDecision.RefreshAction.REFRESHED);
 
             // Second refresh immediately after should be deferred (30s cooldown)
-            RefreshDecision decision2 = service.refreshRootKeysIfNeeded(Instant.now());
+            RefreshDecision decision2 = service.refreshRootKeysIfNeeded(Instant.now()).join();
             assertThat(decision2.action()).isEqualTo(RefreshDecision.RefreshAction.DEFER);
             assertThat(decision2.reason()).contains("recently refreshed");
         }
@@ -911,7 +911,7 @@ class TransparencyServiceTest {
 
             // Artifact from 3 minutes ago should be allowed (within 5 min past tolerance)
             Instant threeMinutesAgo = Instant.now().minus(Duration.ofMinutes(3));
-            RefreshDecision decision = service.refreshRootKeysIfNeeded(threeMinutesAgo);
+            RefreshDecision decision = service.refreshRootKeysIfNeeded(threeMinutesAgo).join();
 
             // Should allow refresh since it's within tolerance
             assertThat(decision.action()).isEqualTo(RefreshDecision.RefreshAction.REFRESHED);
@@ -935,7 +935,7 @@ class TransparencyServiceTest {
 
             // Artifact from 30 seconds in future should be allowed (within 60s tolerance)
             Instant thirtySecondsAhead = Instant.now().plus(Duration.ofSeconds(30));
-            RefreshDecision decision = service.refreshRootKeysIfNeeded(thirtySecondsAhead);
+            RefreshDecision decision = service.refreshRootKeysIfNeeded(thirtySecondsAhead).join();
 
             // Should allow refresh since it's within clock skew tolerance
             assertThat(decision.action()).isEqualTo(RefreshDecision.RefreshAction.REFRESHED);
@@ -971,7 +971,7 @@ class TransparencyServiceTest {
 
             // Attempt refresh - should fail and return DEFER
             Instant recentTime = Instant.now();
-            RefreshDecision decision = service.refreshRootKeysIfNeeded(recentTime);
+            RefreshDecision decision = service.refreshRootKeysIfNeeded(recentTime).join();
 
             assertThat(decision.action()).isEqualTo(RefreshDecision.RefreshAction.DEFER);
             assertThat(decision.reason()).contains("Failed to refresh");

@@ -2,7 +2,6 @@ package com.godaddy.ans.examples.mcp.spring.filter;
 
 import com.godaddy.ans.examples.mcp.spring.config.McpServerProperties;
 import com.godaddy.ans.sdk.transparency.scitt.ScittArtifactManager;
-import com.godaddy.ans.sdk.transparency.scitt.ScittHeaders;
 import jakarta.servlet.Filter;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -14,7 +13,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.util.concurrent.CompletableFuture;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -65,23 +64,15 @@ public class ScittHeaderResponseFilter implements Filter {
         HttpServletResponse httpResponse = (HttpServletResponse) response;
 
         try {
-            // Fetch pre-computed Base64 artifacts concurrently
-            CompletableFuture<String> receiptFuture = artifactManager.getReceiptBase64(agentId);
-            CompletableFuture<String> tokenFuture = artifactManager.getStatusTokenBase64(agentId);
+            // Fetch pre-computed headers (receipt + status token)
+            Map<String, String> headers = artifactManager.getOutgoingHeaders(agentId)
+                .get(ARTIFACT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
-            // Wait for both with timeout
-            String receipt = receiptFuture.get(ARTIFACT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-            String token = tokenFuture.get(ARTIFACT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            // Add SCITT headers to response
+            headers.forEach(httpResponse::addHeader);
 
-            // Add SCITT headers
-            if (receipt != null && !receipt.isEmpty()) {
-                httpResponse.addHeader(ScittHeaders.SCITT_RECEIPT_HEADER, receipt);
-                LOGGER.debug("Added SCITT receipt header for agent: {}", agentId);
-            }
-
-            if (token != null && !token.isEmpty()) {
-                httpResponse.addHeader(ScittHeaders.STATUS_TOKEN_HEADER, token);
-                LOGGER.debug("Added status token header for agent: {}", agentId);
+            if (!headers.isEmpty()) {
+                LOGGER.debug("Added {} SCITT header(s) for agent: {}", headers.size(), agentId);
             }
 
         } catch (Exception e) {

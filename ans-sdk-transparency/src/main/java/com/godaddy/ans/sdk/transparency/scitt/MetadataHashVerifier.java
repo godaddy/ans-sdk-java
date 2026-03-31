@@ -3,7 +3,11 @@ package com.godaddy.ans.sdk.transparency.scitt;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.godaddy.ans.sdk.crypto.CertificateUtils;
+import com.godaddy.ans.sdk.crypto.CryptoCache;
+
 import java.security.MessageDigest;
+import java.util.HexFormat;
 import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -63,19 +67,17 @@ public final class MetadataHashVerifier {
 
         try {
             // Compute actual hash
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            byte[] actualHash = md.digest(metadataBytes);
-            String actualHex = bytesToHex(actualHash);
+            byte[] actualHash = CryptoCache.sha256(metadataBytes);
 
-            // SECURITY: Use constant-time comparison
-            boolean matches = MessageDigest.isEqual(
-                actualHex.getBytes(),
-                expectedHex.getBytes()
-            );
+            // Decode expected hex to bytes using Java 17 HexFormat
+            byte[] expectedBytes = HexFormat.of().parseHex(expectedHex);
+
+            // SECURITY: Use constant-time comparison on raw bytes
+            boolean matches = MessageDigest.isEqual(actualHash, expectedBytes);
 
             if (!matches) {
                 LOGGER.warn("Metadata hash mismatch: expected {}, got SHA256:{}",
-                    expectedHash, actualHex);
+                    expectedHash, CertificateUtils.bytesToHex(actualHash));
             }
 
             return matches;
@@ -95,13 +97,8 @@ public final class MetadataHashVerifier {
     public static String computeHash(byte[] metadataBytes) {
         Objects.requireNonNull(metadataBytes, "metadataBytes cannot be null");
 
-        try {
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            byte[] hash = md.digest(metadataBytes);
-            return "SHA256:" + bytesToHex(hash);
-        } catch (Exception e) {
-            throw new RuntimeException("SHA-256 not available", e);
-        }
+        byte[] hash = CryptoCache.sha256(metadataBytes);
+        return "SHA256:" + CertificateUtils.bytesToHex(hash);
     }
 
     /**
@@ -134,11 +131,4 @@ public final class MetadataHashVerifier {
         return null;
     }
 
-    private static String bytesToHex(byte[] bytes) {
-        StringBuilder sb = new StringBuilder();
-        for (byte b : bytes) {
-            sb.append(String.format("%02x", b & 0xFF));
-        }
-        return sb.toString();
-    }
 }

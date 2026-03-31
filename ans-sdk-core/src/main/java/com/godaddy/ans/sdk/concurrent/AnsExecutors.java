@@ -7,11 +7,13 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+
 
 /**
  * Provides shared executors for ANS SDK operations.
@@ -23,10 +25,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <h2>Default Configuration</h2>
  * <ul>
  *   <li>Pool size: 10 threads (suitable for most use cases)</li>
- *   <li>Queue capacity: 100 tasks (bounded for back-pressure)</li>
+ *   <li>Queue capacity: 500 tasks (bounded for back-pressure)</li>
  *   <li>Thread naming: "ans-io-{n}" for easy identification in thread dumps</li>
  *   <li>Daemon threads: Yes (won't prevent JVM shutdown)</li>
- *   <li>Rejection policy: CallerRunsPolicy (executes on caller thread when queue is full)</li>
+ *   <li>Rejection policy: AbortPolicy (throws RejectedExecutionException when queue is full)</li>
  * </ul>
  *
  * <h2>Usage</h2>
@@ -57,15 +59,28 @@ public final class AnsExecutors {
 
     /**
      * Default queue capacity for bounded task queues.
-     * When the queue is full, tasks are executed on the caller's thread (back-pressure).
+     * When the queue is full, tasks are rejected with RejectedExecutionException.
      */
-    public static final int DEFAULT_QUEUE_CAPACITY = 100;
+    public static final int DEFAULT_QUEUE_CAPACITY = 500;
 
     private static volatile ExecutorService sharedExecutor;
+    private static volatile Runnable cleanupCallback;
     private static final Object LOCK = new Object();
 
     private AnsExecutors() {
         // Utility class
+    }
+
+    /**
+     * Registers a callback to run during {@link #shutdown()}.
+     *
+     * <p>Use this to register cleanup actions (e.g., ThreadLocal removal)
+     * without creating direct import dependencies between modules.</p>
+     *
+     * @param callback the cleanup action to register
+     */
+    public static void onShutdown(Runnable callback) {
+        cleanupCallback = callback;
     }
 
     /**
@@ -86,7 +101,7 @@ public final class AnsExecutors {
             synchronized (LOCK) {
                 executor = sharedExecutor;
                 if (executor == null) {
-                    executor = createSharedExecutor(DEFAULT_POOL_SIZE);
+                    executor = newIoExecutor(DEFAULT_POOL_SIZE);
                     sharedExecutor = executor;
                     LOGGER.debug("Created shared ANS I/O executor with {} threads", DEFAULT_POOL_SIZE);
                 }
@@ -100,7 +115,8 @@ public final class AnsExecutors {
      *
      * <p>Use this method if you need a dedicated executor with different sizing.
      * The returned executor is NOT shared and should be managed by the caller.
-     * Uses a bounded queue with CallerRunsPolicy for back-pressure.</p>
+     * Uses a bounded queue with AbortPolicy to prevent caller-thread blocking
+     * under I/O-bound workloads.</p>
      *
      * @param poolSize the number of threads in the pool
      * @return a new executor
@@ -111,7 +127,14 @@ public final class AnsExecutors {
             60L, TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(DEFAULT_QUEUE_CAPACITY),
             new AnsThreadFactory(),
-            new ThreadPoolExecutor.CallerRunsPolicy()
+            (runnable, executor) -> {
+                LOGGER.error("ANS IO executor rejected task: poolSize={}, active={}, queued={}/{}",
+                    executor.getPoolSize(), executor.getActiveCount(),
+                    executor.getQueue().size(), DEFAULT_QUEUE_CAPACITY);
+                throw new RejectedExecutionException(
+                    "ANS IO executor saturated (queue=" + executor.getQueue().size()
+                    + "/" + DEFAULT_QUEUE_CAPACITY + ", active=" + executor.getActiveCount() + ")");
+            }
         );
     }
 
@@ -148,6 +171,10 @@ public final class AnsExecutors {
      *
      * <p>After shutdown, subsequent calls to {@link #sharedIoExecutor()} will
      * create a new executor.</p>
+     *
+     * <p>This method also runs any callback registered via {@link #onShutdown(Runnable)}
+     * to clean up ThreadLocal entries on the <em>calling</em> thread. Pool threads'
+     * ThreadLocals are eligible for GC once the threads terminate.</p>
      */
     public static void shutdown() {
         synchronized (LOCK) {
@@ -166,6 +193,12 @@ public final class AnsExecutors {
                 sharedExecutor = null;
             }
         }
+
+        // Run registered cleanup callback (e.g., ThreadLocal removal)
+        Runnable callback = cleanupCallback;
+        if (callback != null) {
+            callback.run();
+        }
     }
 
     /**
@@ -178,10 +211,6 @@ public final class AnsExecutors {
      */
     public static boolean isInitialized() {
         return sharedExecutor != null;
-    }
-
-    private static ExecutorService createSharedExecutor(int poolSize) {
-        return newIoExecutor(poolSize);
     }
 
     /**

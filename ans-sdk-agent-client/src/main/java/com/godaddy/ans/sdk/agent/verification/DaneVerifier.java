@@ -5,8 +5,8 @@ import com.godaddy.ans.sdk.crypto.CertificateUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.security.MessageDigest;
 import java.security.cert.X509Certificate;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -236,7 +236,7 @@ public class DaneVerifier {
                 byte[] certData = TlsaUtils.computeCertificateData(serverCert, expectation.selector(),
                         expectation.matchingType());
                 byte[] expected = expectation.expectedData();
-                if (certData != null && Arrays.equals(certData, expected)) {
+                if (certData != null && MessageDigest.isEqual(certData, expected)) {
                     String matchType = TlsaUtils.describeMatchType(expectation.selector(), expectation.matchingType());
                     String fingerprint = TlsaUtils.bytesToHex(certData);
                     LOGGER.debug("DANE post-verify: Certificate matches TLSA record {} ({}) for {}",

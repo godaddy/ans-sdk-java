@@ -1,6 +1,4 @@
-package com.godaddy.ans.sdk.agent.verification;
-
-import static com.godaddy.ans.sdk.crypto.CertificateUtils.normalizeFingerprint;
+package com.godaddy.ans.sdk.agent.server;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
@@ -9,6 +7,7 @@ import com.godaddy.ans.sdk.agent.VerificationMode;
 import com.godaddy.ans.sdk.agent.VerificationPolicy;
 import com.godaddy.ans.sdk.concurrent.AnsExecutors;
 import com.godaddy.ans.sdk.crypto.CertificateUtils;
+import com.godaddy.ans.sdk.crypto.CryptoCache;
 import com.godaddy.ans.sdk.transparency.TransparencyClient;
 import com.godaddy.ans.sdk.transparency.scitt.DefaultScittHeaderProvider;
 import com.godaddy.ans.sdk.transparency.scitt.DefaultScittVerifier;
@@ -21,7 +20,8 @@ import com.godaddy.ans.sdk.transparency.scitt.StatusToken;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.security.MessageDigest;
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.security.PublicKey;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
@@ -34,6 +34,7 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Default implementation of {@link ClientRequestVerifier}.
@@ -73,6 +74,7 @@ public class DefaultClientRequestVerifier implements ClientRequestVerifier {
     private final ScittHeaderProvider headerProvider;
     private final Executor executor;
     private final Duration cacheTtl;
+    private final Duration verificationTimeout;
 
     // Verification result cache keyed by (receiptHash:tokenHash:certFingerprint)
     // Caffeine handles automatic eviction and size limits
@@ -84,6 +86,7 @@ public class DefaultClientRequestVerifier implements ClientRequestVerifier {
         this.headerProvider = builder.headerProvider;
         this.executor = builder.executor;
         this.cacheTtl = builder.cacheTtl;
+        this.verificationTimeout = builder.verificationTimeout;
 
         // Build cache with custom expiry based on min(cacheTtl, tokenExpiry)
         this.verificationCache = Caffeine.newBuilder()
@@ -149,6 +152,7 @@ public class DefaultClientRequestVerifier implements ClientRequestVerifier {
                     // Success - create result and cache it
                     return createSuccessResult(statusToken, receipt, clientCert, policy, startNanos, cacheKey);
                 }, executor)
+                .orTimeout(verificationTimeout.toMillis(), TimeUnit.MILLISECONDS)
                 .exceptionally(e -> {
                     Throwable cause = e instanceof CompletionException && e.getCause() != null
                         ? e.getCause() : e;
@@ -300,7 +304,10 @@ public class DefaultClientRequestVerifier implements ClientRequestVerifier {
                 // Verify signatures
                 ScittExpectation expectation = scittVerifier.verify(receipt, statusToken, rootKeys);
                 if (!expectation.isVerified()) {
-                    LOGGER.warn("SCITT verification failed: {}", expectation.failureReason());
+                    LOGGER.warn("SCITT verification failed for client [subject={}, fingerprint={}]: {}",
+                        clientCert.getSubjectX500Principal().getName(),
+                        CertificateUtils.computeSha256Fingerprint(clientCert),
+                        expectation.failureReason());
                     return ScittVerificationResult.failure(ClientRequestVerificationResult.failure(
                         List.of("SCITT verification failed: " + expectation.failureReason()),
                         statusToken, receipt, clientCert, policy, durationSinceNanos(startNanos)));
@@ -341,14 +348,14 @@ public class DefaultClientRequestVerifier implements ClientRequestVerifier {
         }
 
         boolean fingerprintMatches = validIdentityFingerprints.stream()
-            .anyMatch(expected -> fingerprintMatchesConstantTime(clientFingerprint, expected));
+            .anyMatch(expected -> CertificateUtils.fingerprintMatches(clientFingerprint, expected));
 
         if (!fingerprintMatches) {
             LOGGER.warn("Client certificate fingerprint does not match any identity cert in status token");
             return ClientRequestVerificationResult.failure(
                 List.of("Client certificate fingerprint mismatch",
-                    "Actual: " + truncateFingerprint(clientFingerprint),
-                    "Expected one of: " + truncateFingerprints(validIdentityFingerprints)),
+                    "Actual: " + CertificateUtils.truncateFingerprint(clientFingerprint),
+                    "Expected one of: " + CertificateUtils.truncateFingerprints(validIdentityFingerprints)),
                 statusToken, receipt, clientCert, policy, durationSinceNanos(startNanos));
         }
 
@@ -439,53 +446,18 @@ public class DefaultClientRequestVerifier implements ClientRequestVerifier {
     /**
      * Computes a cache key from the raw header values and certificate fingerprint.
      *
-     * <p>Uses the raw Base64 header strings directly rather than hashing decoded bytes,
-     * avoiding 2x SHA-256 computations on every cache lookup.</p>
+     * <p>Hashes the concatenated inputs to produce a fixed-size key. This prevents
+     * memory pressure from large Base64 headers and avoids sentinel collision
+     * (e.g., a header literally containing "none").</p>
      */
     private String computeCacheKey(String receiptHeader, String tokenHeader, String certFingerprint) {
-        // Use raw Base64 header values directly - they're already unique identifiers
-        String receiptKey = receiptHeader != null ? receiptHeader : "none";
-        String tokenKey = tokenHeader != null ? tokenHeader : "none";
-        return receiptKey + ":" + tokenKey + ":" + certFingerprint;
+        // Use null byte as sentinel - cannot appear in header values
+        String raw = (receiptHeader != null ? receiptHeader : "\0") + "|"
+                   + (tokenHeader != null ? tokenHeader : "\0") + "|"
+                   + certFingerprint;
+        return CertificateUtils.bytesToHex(CryptoCache.sha256(raw.getBytes(StandardCharsets.UTF_8)));
     }
 
-
-    /**
-     * Constant-time fingerprint comparison to prevent timing attacks.
-     */
-    private boolean fingerprintMatchesConstantTime(String actual, String expected) {
-        if (actual == null || expected == null) {
-            return false;
-        }
-        // Normalize fingerprints
-        String normalizedActual = normalizeFingerprint(actual);
-        String normalizedExpected = normalizeFingerprint(expected);
-        if (normalizedActual.length() != normalizedExpected.length()) {
-            return false;
-        }
-        // Use MessageDigest.isEqual for constant-time comparison
-        return MessageDigest.isEqual(
-            normalizedActual.getBytes(),
-            normalizedExpected.getBytes()
-        );
-    }
-
-    private String truncateFingerprint(String fingerprint) {
-        if (fingerprint == null || fingerprint.length() <= 16) {
-            return fingerprint;
-        }
-        return fingerprint.substring(0, 16) + "...";
-    }
-
-    private String truncateFingerprints(List<String> fingerprints) {
-        if (fingerprints.size() <= 2) {
-            return fingerprints.stream()
-                .map(this::truncateFingerprint)
-                .toList()
-                .toString();
-        }
-        return "[" + truncateFingerprint(fingerprints.get(0)) + ", ... (" + fingerprints.size() + " total)]";
-    }
 
     // ==================== Caffeine Cache Support ====================
 
@@ -549,6 +521,7 @@ public class DefaultClientRequestVerifier implements ClientRequestVerifier {
         private ScittHeaderProvider headerProvider;
         private Executor executor = AnsExecutors.sharedIoExecutor();
         private Duration cacheTtl = Duration.ofMinutes(5);
+        private Duration verificationTimeout = Duration.ofSeconds(10);
 
         /**
          * Sets the TransparencyClient for root key fetching.
@@ -611,6 +584,25 @@ public class DefaultClientRequestVerifier implements ClientRequestVerifier {
         }
 
         /**
+         * Sets the timeout for the overall verification operation.
+         *
+         * <p>If verification does not complete within this timeout,
+         * the future completes with a failure result. Defaults to 10 seconds.</p>
+         *
+         * @param timeout the verification timeout (must be positive)
+         * @return this builder
+         */
+        public Builder verificationTimeout(Duration timeout) {
+            Objects.requireNonNull(timeout, "timeout cannot be null");
+            if (timeout.isZero() || timeout.isNegative()) {
+                throw new IllegalArgumentException(
+                    "verificationTimeout must be positive, got: " + timeout);
+            }
+            this.verificationTimeout = timeout;
+            return this;
+        }
+
+        /**
          * Builds the verifier.
          *
          * @return the configured verifier
@@ -619,7 +611,8 @@ public class DefaultClientRequestVerifier implements ClientRequestVerifier {
         public DefaultClientRequestVerifier build() {
             Objects.requireNonNull(transparencyClient, "transparencyClient is required");
             if (scittVerifier == null) {
-                scittVerifier = new DefaultScittVerifier();
+                String expectedIssuer = URI.create(transparencyClient.getBaseUrl()).getHost();
+                scittVerifier = new DefaultScittVerifier(expectedIssuer);
             }
             if (headerProvider == null) {
                 headerProvider = new DefaultScittHeaderProvider();

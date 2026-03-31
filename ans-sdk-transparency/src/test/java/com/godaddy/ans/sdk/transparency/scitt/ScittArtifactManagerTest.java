@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.Executors;
@@ -274,8 +275,8 @@ class ScittArtifactManagerTest {
     }
 
     @Nested
-    @DisplayName("getReceiptBase64() tests")
-    class GetReceiptBytesTests {
+    @DisplayName("getOutgoingHeaders() tests")
+    class GetOutgoingHeadersTests {
 
         @Test
         @DisplayName("Should reject null agentId")
@@ -284,7 +285,7 @@ class ScittArtifactManagerTest {
                 .transparencyClient(mockClient)
                 .build();
 
-            assertThatThrownBy(() -> manager.getReceiptBase64(null))
+            assertThatThrownBy(() -> manager.getOutgoingHeaders(null))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("agentId cannot be null");
         }
@@ -298,145 +299,116 @@ class ScittArtifactManagerTest {
 
             manager.close();
 
-            CompletableFuture<String> future = manager.getReceiptBase64("test-agent");
+            CompletableFuture<Map<String, String>> future = manager.getOutgoingHeaders("test-agent");
             assertThat(future).isCompletedExceptionally();
         }
 
         @Test
-        @DisplayName("Should fetch receipt Base64 from transparency client")
-        void shouldFetchReceiptBase64FromClient() throws Exception {
+        @DisplayName("Should return both headers from transparency client")
+        void shouldReturnBothHeaders() throws Exception {
             byte[] receiptBytes = createValidReceiptBytes();
+            byte[] tokenBytes = createValidStatusTokenBytes();
             when(mockClient.getReceipt("test-agent")).thenReturn(receiptBytes);
+            when(mockClient.getStatusToken("test-agent")).thenReturn(tokenBytes);
 
             manager = ScittArtifactManager.builder()
                 .transparencyClient(mockClient)
                 .build();
 
-            CompletableFuture<String> future = manager.getReceiptBase64("test-agent");
-            String result = future.get(5, TimeUnit.SECONDS);
+            Map<String, String> headers = manager.getOutgoingHeaders("test-agent")
+                .get(5, TimeUnit.SECONDS);
 
-            assertThat(result).isNotNull();
-            assertThat(result).isNotEmpty();
-            // Verify it's valid Base64 that decodes to the original bytes
-            assertThat(java.util.Base64.getDecoder().decode(result)).isEqualTo(receiptBytes);
+            assertThat(headers).hasSize(2);
+            assertThat(headers).containsKey(ScittHeaders.SCITT_RECEIPT_HEADER);
+            assertThat(headers).containsKey(ScittHeaders.STATUS_TOKEN_HEADER);
+
+            // Verify Base64 values decode to original bytes
+            assertThat(java.util.Base64.getDecoder().decode(
+                headers.get(ScittHeaders.SCITT_RECEIPT_HEADER))).isEqualTo(receiptBytes);
+            assertThat(java.util.Base64.getDecoder().decode(
+                headers.get(ScittHeaders.STATUS_TOKEN_HEADER))).isEqualTo(tokenBytes);
+
             verify(mockClient).getReceipt("test-agent");
+            verify(mockClient).getStatusToken("test-agent");
         }
 
         @Test
-        @DisplayName("Should cache receipt Base64 on subsequent calls")
-        void shouldCacheReceiptBase64() throws Exception {
+        @DisplayName("Should cache headers on subsequent calls")
+        void shouldCacheHeaders() throws Exception {
             byte[] receiptBytes = createValidReceiptBytes();
+            byte[] tokenBytes = createValidStatusTokenBytes();
             when(mockClient.getReceipt("test-agent")).thenReturn(receiptBytes);
+            when(mockClient.getStatusToken("test-agent")).thenReturn(tokenBytes);
 
             manager = ScittArtifactManager.builder()
                 .transparencyClient(mockClient)
                 .build();
 
             // First call
-            String first = manager.getReceiptBase64("test-agent").get(5, TimeUnit.SECONDS);
-            // Second call should use cache and return same String instance
-            String second = manager.getReceiptBase64("test-agent").get(5, TimeUnit.SECONDS);
+            Map<String, String> first = manager.getOutgoingHeaders("test-agent")
+                .get(5, TimeUnit.SECONDS);
+            // Second call should use cache
+            Map<String, String> second = manager.getOutgoingHeaders("test-agent")
+                .get(5, TimeUnit.SECONDS);
 
-            assertThat(first).isSameAs(second);
-            // Client should only be called once
+            // Values should be the same (from cache)
+            assertThat(first.get(ScittHeaders.SCITT_RECEIPT_HEADER))
+                .isEqualTo(second.get(ScittHeaders.SCITT_RECEIPT_HEADER));
+            assertThat(first.get(ScittHeaders.STATUS_TOKEN_HEADER))
+                .isEqualTo(second.get(ScittHeaders.STATUS_TOKEN_HEADER));
+
+            // Client should only be called once for each artifact
             verify(mockClient, times(1)).getReceipt("test-agent");
+            verify(mockClient, times(1)).getStatusToken("test-agent");
         }
 
         @Test
-        @DisplayName("Should wrap client exception in ScittFetchException")
-        void shouldWrapClientException() {
+        @DisplayName("Should return immutable map")
+        void shouldReturnImmutableMap() throws Exception {
+            byte[] receiptBytes = createValidReceiptBytes();
+            byte[] tokenBytes = createValidStatusTokenBytes();
+            when(mockClient.getReceipt("test-agent")).thenReturn(receiptBytes);
+            when(mockClient.getStatusToken("test-agent")).thenReturn(tokenBytes);
+
+            manager = ScittArtifactManager.builder()
+                .transparencyClient(mockClient)
+                .build();
+
+            Map<String, String> headers = manager.getOutgoingHeaders("test-agent")
+                .get(5, TimeUnit.SECONDS);
+
+            assertThatThrownBy(() -> headers.put("new-key", "value"))
+                .isInstanceOf(UnsupportedOperationException.class);
+        }
+
+        @Test
+        @DisplayName("Should wrap receipt fetch exception")
+        void shouldWrapReceiptFetchException() {
             when(mockClient.getReceipt(anyString())).thenThrow(new RuntimeException("Network error"));
 
             manager = ScittArtifactManager.builder()
                 .transparencyClient(mockClient)
                 .build();
 
-            CompletableFuture<String> future = manager.getReceiptBase64("test-agent");
+            CompletableFuture<Map<String, String>> future = manager.getOutgoingHeaders("test-agent");
 
             assertThatThrownBy(() -> future.get(5, TimeUnit.SECONDS))
                 .hasCauseInstanceOf(ScittFetchException.class)
                 .hasMessageContaining("Failed to fetch receipt");
         }
-    }
-
-    @Nested
-    @DisplayName("getStatusTokenBase64() tests")
-    class GetStatusTokenBytesTests {
 
         @Test
-        @DisplayName("Should reject null agentId")
-        void shouldRejectNullAgentId() {
-            manager = ScittArtifactManager.builder()
-                .transparencyClient(mockClient)
-                .build();
-
-            assertThatThrownBy(() -> manager.getStatusTokenBase64(null))
-                .isInstanceOf(NullPointerException.class)
-                .hasMessageContaining("agentId cannot be null");
-        }
-
-        @Test
-        @DisplayName("Should return failed future when manager is closed")
-        void shouldReturnFailedFutureWhenClosed() {
-            manager = ScittArtifactManager.builder()
-                .transparencyClient(mockClient)
-                .build();
-
-            manager.close();
-
-            CompletableFuture<String> future = manager.getStatusTokenBase64("test-agent");
-            assertThat(future).isCompletedExceptionally();
-        }
-
-        @Test
-        @DisplayName("Should fetch status token Base64 from transparency client")
-        void shouldFetchTokenBase64FromClient() throws Exception {
-            byte[] tokenBytes = createValidStatusTokenBytes();
-            when(mockClient.getStatusToken("test-agent")).thenReturn(tokenBytes);
-
-            manager = ScittArtifactManager.builder()
-                .transparencyClient(mockClient)
-                .build();
-
-            CompletableFuture<String> future = manager.getStatusTokenBase64("test-agent");
-            String result = future.get(5, TimeUnit.SECONDS);
-
-            assertThat(result).isNotNull();
-            assertThat(result).isNotEmpty();
-            // Verify it's valid Base64 that decodes to the original bytes
-            assertThat(java.util.Base64.getDecoder().decode(result)).isEqualTo(tokenBytes);
-            verify(mockClient).getStatusToken("test-agent");
-        }
-
-        @Test
-        @DisplayName("Should cache status token Base64 on subsequent calls")
-        void shouldCacheTokenBase64() throws Exception {
-            byte[] tokenBytes = createValidStatusTokenBytes();
-            when(mockClient.getStatusToken("test-agent")).thenReturn(tokenBytes);
-
-            manager = ScittArtifactManager.builder()
-                .transparencyClient(mockClient)
-                .build();
-
-            // First call
-            String first = manager.getStatusTokenBase64("test-agent").get(5, TimeUnit.SECONDS);
-            // Second call should use cache and return same String instance
-            String second = manager.getStatusTokenBase64("test-agent").get(5, TimeUnit.SECONDS);
-
-            assertThat(first).isSameAs(second);
-            verify(mockClient, times(1)).getStatusToken("test-agent");
-        }
-
-        @Test
-        @DisplayName("Should wrap client exception in ScittFetchException")
-        void shouldWrapClientException() {
+        @DisplayName("Should wrap token fetch exception")
+        void shouldWrapTokenFetchException() {
+            byte[] receiptBytes = createValidReceiptBytes();
+            when(mockClient.getReceipt("test-agent")).thenReturn(receiptBytes);
             when(mockClient.getStatusToken(anyString())).thenThrow(new RuntimeException("Network error"));
 
             manager = ScittArtifactManager.builder()
                 .transparencyClient(mockClient)
                 .build();
 
-            CompletableFuture<String> future = manager.getStatusTokenBase64("test-agent");
+            CompletableFuture<Map<String, String>> future = manager.getOutgoingHeaders("test-agent");
 
             assertThatThrownBy(() -> future.get(5, TimeUnit.SECONDS))
                 .hasCauseInstanceOf(ScittFetchException.class)

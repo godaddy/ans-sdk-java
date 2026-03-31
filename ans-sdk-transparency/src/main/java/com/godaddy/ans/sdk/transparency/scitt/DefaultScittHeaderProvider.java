@@ -81,8 +81,8 @@ public class DefaultScittHeaderProvider implements ScittHeaderProvider {
     public Optional<ScittArtifacts> extractArtifacts(Map<String, String> headers) {
         Objects.requireNonNull(headers, "headers cannot be null");
 
-        String receiptHeader = getHeaderCaseInsensitive(headers, ScittHeaders.SCITT_RECEIPT_HEADER);
-        String tokenHeader = getHeaderCaseInsensitive(headers, ScittHeaders.STATUS_TOKEN_HEADER);
+        String receiptHeader = headers.get(ScittHeaders.SCITT_RECEIPT_HEADER);
+        String tokenHeader = headers.get(ScittHeaders.STATUS_TOKEN_HEADER);
 
         if (receiptHeader == null && tokenHeader == null) {
             LOGGER.debug("No SCITT headers present in response");
@@ -130,23 +130,14 @@ public class DefaultScittHeaderProvider implements ScittHeaderProvider {
             }
         }
 
-        if (receipt == null && statusToken == null) {
-            // Headers were present but BOTH failed to parse
+        if (receipt == null || statusToken == null) {
+            // Headers were present but failed to parse
             String errorDetail = String.join("; ", parseErrors);
-            LOGGER.error("SCITT headers present but all artifacts failed to parse: {}", errorDetail);
-            throw new IllegalStateException(
-                "SCITT headers present but failed to parse: " + errorDetail);
+            LOGGER.error("SCITT headers present but artifacts failed to parse: {}", errorDetail);
+            return Optional.empty();
         }
 
-        return Optional.of(new ScittArtifacts(receipt, statusToken, receiptBytes, tokenBytes));
-    }
-
-    /**
-     * Gets a header value with case-insensitive key lookup.
-     * Headers are expected to have lowercase keys (normalized by caller).
-     */
-    private String getHeaderCaseInsensitive(Map<String, String> headers, String key) {
-        return headers.get(key.toLowerCase());
+        return Optional.of(new ScittArtifacts(receipt, statusToken));
     }
 
     /**

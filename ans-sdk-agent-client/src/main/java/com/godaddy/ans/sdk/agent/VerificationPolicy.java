@@ -118,13 +118,20 @@ public record VerificationPolicy(
      * SCITT verification with badge fallback.
      *
      * <p>Uses SCITT artifacts (receipts and status tokens) delivered via HTTP headers
-     * for verification. Falls back to badge verification if SCITT headers are not
-     * present. This is the recommended migration path from badge-based verification.</p>
+     * for verification when available. Falls back to badge verification if SCITT headers
+     * are not present. This is the recommended migration path from badge-based verification.</p>
+     *
+     * <p><b>Behavior:</b></p>
+     * <ul>
+     *   <li>SCITT headers present and valid → SCITT verification used</li>
+     *   <li>SCITT headers present but invalid → Connection rejected</li>
+     *   <li>SCITT headers absent → Badge verification required as fallback</li>
+     * </ul>
      */
     public static final VerificationPolicy SCITT_ENHANCED = new VerificationPolicy(
         VerificationMode.DISABLED,
-        VerificationMode.ADVISORY,
-        VerificationMode.REQUIRED
+        VerificationMode.REQUIRED,
+        VerificationMode.FALLBACK_ALLOWED
     );
 
     /**
@@ -181,6 +188,33 @@ public record VerificationPolicy(
      * @return true if SCITT mode is not DISABLED
      */
     public boolean hasScittVerification() {
+        return scittMode != VerificationMode.DISABLED;
+    }
+
+    /**
+     * Returns true if this policy allows falling back to badge verification
+     * when SCITT headers are not present.
+     *
+     * <p>Fallback is allowed when SCITT mode is {@link VerificationMode#FALLBACK_ALLOWED}.
+     * This matches {@link #SCITT_ENHANCED} - the migration scenario.</p>
+     *
+     * @return true if badge fallback is allowed when SCITT headers are missing
+     */
+    public boolean allowsScittFallbackToBadge() {
+        return scittMode == VerificationMode.FALLBACK_ALLOWED;
+    }
+
+    /**
+     * Returns true if SCITT verification failure with present headers
+     * should reject the connection (regardless of fallback settings).
+     *
+     * <p>When SCITT headers are present but invalid, we always reject
+     * to prevent garbage header attacks. This is true for both REQUIRED
+     * and ADVISORY modes when headers exist.</p>
+     *
+     * @return true if invalid SCITT headers should cause rejection
+     */
+    public boolean rejectsInvalidScittHeaders() {
         return scittMode != VerificationMode.DISABLED;
     }
 

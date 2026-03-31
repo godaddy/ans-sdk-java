@@ -218,7 +218,7 @@ class PreVerificationResultTest {
     @Test
     void hasScittExpectationReturnsTrueWhenPresent() {
         ScittExpectation expectation = ScittExpectation.verified(
-            List.of("fp1"), List.of(), "host", "test.ans", Map.of(), null);
+            List.of("fp1"), List.of(), "test.ans", Map.of(), null);
         ScittPreVerifyResult scittResult = ScittPreVerifyResult.verified(expectation, null, null);
 
         PreVerificationResult result = PreVerificationResult.builder("test.com", 443)
@@ -308,7 +308,7 @@ class PreVerificationResultTest {
     @Test
     void scittPreVerifySucceededReturnsTrueWhenVerified() {
         ScittExpectation expectation = ScittExpectation.verified(
-            List.of("server-fp"), List.of("identity-fp"), "agent.example.com", "test.ans", Map.of(), null);
+            List.of("server-fp"), List.of("identity-fp"), "test.ans", Map.of(), null);
         ScittPreVerifyResult scittResult = ScittPreVerifyResult.verified(expectation, null, null);
 
         PreVerificationResult result = PreVerificationResult.builder("test.com", 443)
@@ -321,7 +321,7 @@ class PreVerificationResultTest {
     @Test
     void builderWithScittPreVerifyResult() {
         ScittExpectation expectation = ScittExpectation.verified(
-            List.of("fp1", "fp2"), List.of(), "host", "test.ans", Map.of("https", "SHA256:abc"), null);
+            List.of("fp1", "fp2"), List.of(), "test.ans", Map.of("https", "SHA256:abc"), null);
         ScittPreVerifyResult scittResult = ScittPreVerifyResult.verified(expectation, null, null);
 
         PreVerificationResult result = PreVerificationResult.builder("test.com", 443)
@@ -337,7 +337,7 @@ class PreVerificationResultTest {
     @Test
     void toStringIncludesScittInfo() {
         ScittExpectation expectation = ScittExpectation.verified(
-            List.of("fp1"), List.of(), "host", "test.ans", Map.of(), null);
+            List.of("fp1"), List.of(), "test.ans", Map.of(), null);
         ScittPreVerifyResult scittResult = ScittPreVerifyResult.verified(expectation, null, null);
 
         PreVerificationResult result = PreVerificationResult.builder("test.com", 443)
@@ -359,7 +359,7 @@ class PreVerificationResultTest {
     @Test
     void recordConstructorWithScittPreVerifyResult() {
         ScittExpectation expectation = ScittExpectation.verified(
-            List.of("fp1"), List.of(), "host", "test.ans", Map.of(), null);
+            List.of("fp1"), List.of(), "test.ans", Map.of(), null);
         ScittPreVerifyResult scittResult = ScittPreVerifyResult.verified(expectation, null, null);
 
         PreVerificationResult result = new PreVerificationResult(

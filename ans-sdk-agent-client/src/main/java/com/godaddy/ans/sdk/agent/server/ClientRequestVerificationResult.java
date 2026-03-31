@@ -1,4 +1,4 @@
-package com.godaddy.ans.sdk.agent.verification;
+package com.godaddy.ans.sdk.agent.server;
 
 import com.godaddy.ans.sdk.agent.VerificationPolicy;
 import com.godaddy.ans.sdk.transparency.scitt.ScittReceipt;

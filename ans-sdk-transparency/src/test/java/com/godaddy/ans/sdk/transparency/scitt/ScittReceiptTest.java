@@ -560,8 +560,8 @@ class ScittReceiptTest {
         }
 
         @Test
-        @DisplayName("Should skip non-32-byte entries in hash path")
-        void shouldSkipNon32ByteEntriesInHashPath() throws ScittParseException {
+        @DisplayName("Should reject non-32-byte entries in hash path")
+        void shouldRejectNon32ByteEntriesInHashPath() {
             CBORObject protectedHeader = CBORObject.NewMap();
             protectedHeader.Add(1, -7);
             protectedHeader.Add(395, 1);
@@ -570,12 +570,12 @@ class ScittReceiptTest {
             // Hash path with mixed valid and invalid entries
             CBORObject hashPathArray = CBORObject.NewArray();
             hashPathArray.Add(CBORObject.FromObject(new byte[32]));  // valid 32-byte hash
-            hashPathArray.Add(CBORObject.FromObject(new byte[16]));  // invalid 16-byte (skipped)
+            hashPathArray.Add(CBORObject.FromObject(new byte[16]));  // invalid 16-byte
 
             CBORObject inclusionProofMap = CBORObject.NewMap();
             inclusionProofMap.Add(-1, 4L);  // tree_size
             inclusionProofMap.Add(-2, 1L);  // leaf_index
-            inclusionProofMap.Add(-3, hashPathArray);  // hash_path with mixed sizes
+            inclusionProofMap.Add(-3, hashPathArray);  // hash_path with invalid entry
             inclusionProofMap.Add(-4, CBORObject.FromObject(new byte[32]));  // root_hash
 
             CBORObject unprotectedHeader = CBORObject.NewMap();
@@ -588,10 +588,11 @@ class ScittReceiptTest {
             array.Add(new byte[64]);
             CBORObject tagged = CBORObject.FromObjectAndTag(array, 18);
 
-            ScittReceipt receipt = ScittReceipt.parse(tagged.EncodeToBytes());
-
-            // Only the valid 32-byte hash should be included
-            assertThat(receipt.inclusionProof().hashPath()).hasSize(1);
+            // Invalid hash size should now throw instead of being silently skipped
+            assertThatThrownBy(() -> ScittReceipt.parse(tagged.EncodeToBytes()))
+                .isInstanceOf(ScittParseException.class)
+                .hasMessageContaining("Invalid hash at path index 1")
+                .hasMessageContaining("expected 32 bytes, got 16");
         }
     }
 

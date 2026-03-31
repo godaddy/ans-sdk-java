@@ -74,6 +74,8 @@ Uses `AnsVerifiedClient` for mTLS and SCITT cryptographic proof:
 // Create client with SCITT verification
 AnsVerifiedClient client = AnsVerifiedClient.builder()
     .agentId(agentId)
+    .transparencyClient(TransparencyClient.builder()
+        .baseUrl(TransparencyClient.OTE_BASE_URL).build())
     .keyStorePath(keystorePath, keystorePassword)
     .policy(VerificationPolicy.SCITT_REQUIRED)
     .connectTimeout(Duration.ofSeconds(30))

@@ -176,11 +176,27 @@ class TransparencyClientTest {
     }
 
     @Test
-    @DisplayName("Should create client with default configuration")
-    void shouldCreateClientWithDefaults() {
-        TransparencyClient client = TransparencyClient.create();
+    @DisplayName("Should throw when no baseUrl is provided")
+    void shouldThrowWhenNoBaseUrlProvided() {
+        assertThatThrownBy(() -> TransparencyClient.builder().build())
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("baseUrl is required");
+    }
 
-        assertThat(client.getBaseUrl()).isEqualTo(TransparencyClient.DEFAULT_BASE_URL);
+    @Test
+    @DisplayName("Should create OTE client via factory method")
+    void shouldCreateOteClient() {
+        TransparencyClient client = TransparencyClient.createOte();
+
+        assertThat(client.getBaseUrl()).isEqualTo(TransparencyClient.OTE_BASE_URL);
+    }
+
+    @Test
+    @DisplayName("Should create production client via factory method")
+    void shouldCreateProductionClient() {
+        TransparencyClient client = TransparencyClient.createProduction();
+
+        assertThat(client.getBaseUrl()).isEqualTo(TransparencyClient.PRODUCTION_BASE_URL);
     }
 
     @Test

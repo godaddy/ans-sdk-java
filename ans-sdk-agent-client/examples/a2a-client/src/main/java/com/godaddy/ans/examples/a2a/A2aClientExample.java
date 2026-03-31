@@ -148,7 +148,7 @@ public class A2aClientExample {
                             .build())))
             .badgeVerifier(new BadgeVerifier(
                 BadgeVerificationService.builder()
-                    .transparencyClient(TransparencyClient.builder().build())
+                    .transparencyClient(TransparencyClient.createOte())
                     .build()))
             .build();
 
@@ -169,7 +169,10 @@ public class A2aClientExample {
         System.out.println("\nStep 3: Creating SSLContext with certificate capture");
         System.out.println("-".repeat(40));
 
-        SSLContext sslContext = AnsVerifiedSslContextFactory.create();
+        AnsVerifiedSslContextFactory.SslContextResult sslResult =
+            AnsVerifiedSslContextFactory.createWithTrustManager(null, null);
+        SSLContext sslContext = sslResult.sslContext();
+        CertificateCapturingTrustManager trustManager = sslResult.trustManager();
         System.out.println("  Created SSLContext with CertificateCapturingTrustManager");
 
         // ============================================================
@@ -201,7 +204,7 @@ public class A2aClientExample {
         System.out.println("-".repeat(40));
 
         PreVerificationResult preResult = preResultFuture.join();
-        X509Certificate[] capturedCerts = CertificateCapturingTrustManager.getCapturedCertificates(hostname);
+        X509Certificate[] capturedCerts = trustManager.getInstanceCapturedCertificates(hostname);
 
         if (capturedCerts == null || capturedCerts.length == 0) {
             throw new SecurityException("No certificate captured for " + hostname);
@@ -238,21 +241,7 @@ public class A2aClientExample {
 
         CompletableFuture<String> responseFuture = new CompletableFuture<>();
 
-        BiConsumer<ClientEvent, AgentCard> eventHandler = (event, card) -> {
-            System.out.println("  Received event: " + event.getClass().getSimpleName());
-            if (event instanceof MessageEvent messageEvent) {
-                Message msg = messageEvent.getMessage();
-                if (msg.parts() != null) {
-                    for (Part<?> part : msg.parts()) {
-                        if (part instanceof TextPart textPart) {
-                            responseFuture.complete(textPart.text());
-                        }
-                    }
-                }
-            } else if (event instanceof TaskEvent taskEvent) {
-                System.out.println("    Task status: " + taskEvent.getTask().status());
-            }
-        };
+        BiConsumer<ClientEvent, AgentCard> eventHandler = getClientEventAgentCardBiConsumer(responseFuture);
 
         JSONRPCTransportConfig transportConfig = new JSONRPCTransportConfig(httpClient);
 
@@ -273,7 +262,7 @@ public class A2aClientExample {
 
         } finally {
             // Clean up
-            CertificateCapturingTrustManager.clearCapturedCertificates(hostname);
+            trustManager.clearInstanceCapturedCertificates(hostname);
         }
     }
 
@@ -299,9 +288,6 @@ public class A2aClientExample {
         System.out.println("Example 2: A2A with SCITT Verification");
         System.out.println("===========================================");
 
-        URI serverUri = URI.create(serverUrl);
-        String hostname = serverUri.getHost();
-
         // ============================================================
         // STEP 1: Create AnsVerifiedClient with SCITT policy
         // ============================================================
@@ -310,13 +296,15 @@ public class A2aClientExample {
 
         try (AnsVerifiedClient ansClient = AnsVerifiedClient.builder()
                 .agentId(agentId)
+                .transparencyClient(TransparencyClient.builder()
+                    .baseUrl(TransparencyClient.OTE_BASE_URL).build())
                 .keyStorePath(keystorePath, keystorePassword)
                 .policy(VerificationPolicy.SCITT_REQUIRED)
                 .build()) {
 
             System.out.println("  Policy: " + ansClient.policy());
             // Fetch SCITT headers (blocking is fine during setup, not on I/O threads)
-            var scittHeaders = ansClient.scittHeadersAsync().join();
+            var scittHeaders = ansClient.fetchScittHeadersAsync().join();
             if (!scittHeaders.isEmpty()) {
                 System.out.println("  SCITT headers configured for outgoing requests");
             }
@@ -372,25 +360,12 @@ public class A2aClientExample {
                 // STEP 6: Create A2A client and send message
                 // ============================================================
                 System.out.println("\nStep 6: Sending A2A message");
+
                 System.out.println("-".repeat(40));
 
                 CompletableFuture<String> responseFuture = new CompletableFuture<>();
 
-                BiConsumer<ClientEvent, AgentCard> eventHandler = (event, card) -> {
-                    System.out.println("  Received event: " + event.getClass().getSimpleName());
-                    if (event instanceof MessageEvent messageEvent) {
-                        Message msg = messageEvent.getMessage();
-                        if (msg.parts() != null) {
-                            for (Part<?> part : msg.parts()) {
-                                if (part instanceof TextPart textPart) {
-                                    responseFuture.complete(textPart.text());
-                                }
-                            }
-                        }
-                    } else if (event instanceof TaskEvent taskEvent) {
-                        System.out.println("    Task status: " + taskEvent.getTask().status());
-                    }
-                };
+                BiConsumer<ClientEvent, AgentCard> eventHandler = getClientEventAgentCardBiConsumer(responseFuture);
 
                 JSONRPCTransportConfig transportConfig = new JSONRPCTransportConfig(httpClient);
 
@@ -399,20 +374,33 @@ public class A2aClientExample {
                     .addConsumer(eventHandler)
                     .build();
 
-                try {
-                    Message message = A2A.toUserMessage("Hello from SCITT-verified A2A client!");
-                    System.out.println("  Sending message: \"Hello from SCITT-verified A2A client!\"");
+                Message message = A2A.toUserMessage("Hello from SCITT-verified A2A client!");
+                System.out.println("  Sending message: \"Hello from SCITT-verified A2A client!\"");
 
-                    client.sendMessage(message);
+                client.sendMessage(message);
 
-                    String response = responseFuture.get(30, TimeUnit.SECONDS);
-                    System.out.println("  Response: " + response);
-                    System.out.println("\n  Successfully communicated with SCITT-verified A2A server!");
-
-                } finally {
-                    CertificateCapturingTrustManager.clearCapturedCertificates(hostname);
-                }
+                String response = responseFuture.get(30, TimeUnit.SECONDS);
+                System.out.println("  Response: " + response);
+                System.out.println("\n  Successfully communicated with SCITT-verified A2A server!");
+                // AnsConnection.close() handles certificate cleanup via the provider
             }
         }
+    }
+
+    private static BiConsumer<ClientEvent, AgentCard> getClientEventAgentCardBiConsumer(
+            CompletableFuture<String> responseFuture) {
+        return (event, card) -> {
+            System.out.println("  Received event: " + event.getClass().getSimpleName());
+            if (event instanceof MessageEvent messageEvent) {
+                Message msg = messageEvent.getMessage();
+                for (Part<?> part : msg.parts()) {
+                    if (part instanceof TextPart textPart) {
+                        responseFuture.complete(textPart.text());
+                    }
+                }
+            } else if (event instanceof TaskEvent taskEvent) {
+                System.out.println("    Task status: " + taskEvent.getTask().status());
+            }
+        };
     }
 }

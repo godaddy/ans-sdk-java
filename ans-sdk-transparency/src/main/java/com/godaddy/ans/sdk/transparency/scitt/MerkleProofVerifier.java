@@ -1,7 +1,7 @@
 package com.godaddy.ans.sdk.transparency.scitt;
 
+import com.godaddy.ans.sdk.crypto.CertificateUtils;
 import com.godaddy.ans.sdk.crypto.CryptoCache;
-import org.bouncycastle.util.encoders.Hex;
 
 import java.security.MessageDigest;
 import java.util.List;
@@ -267,11 +267,7 @@ public final class MerkleProofVerifier {
      * @throws IllegalArgumentException if hex is null or has odd length
      */
     public static byte[] hexToBytes(String hex) {
-        Objects.requireNonNull(hex, "hex cannot be null");
-        if (hex.length() % 2 != 0) {
-            throw new IllegalArgumentException("Hex string must have even length");
-        }
-        return Hex.decode(hex);
+        return CertificateUtils.hexToBytes(hex);
     }
 
     /**
@@ -281,7 +277,6 @@ public final class MerkleProofVerifier {
      * @return the hex string (lowercase)
      */
     public static String bytesToHex(byte[] bytes) {
-        Objects.requireNonNull(bytes, "bytes cannot be null");
-        return Hex.toHexString(bytes);
+        return CertificateUtils.bytesToHex(bytes);
     }
 }

@@ -34,6 +34,8 @@ The integration uses the high-level `AnsVerifiedClient`:
 // 1. Create ANS verified client with policy
 try (AnsVerifiedClient ansClient = AnsVerifiedClient.builder()
         .agentId(agentId)                        // For SCITT headers (server verifies these)
+        .transparencyClient(TransparencyClient.builder()
+            .baseUrl(TransparencyClient.OTE_BASE_URL).build())
         .keyStorePath(keystorePath, password)    // For mTLS client auth
         .policy(VerificationPolicy.SCITT_REQUIRED)
         .build()) {
@@ -133,7 +135,7 @@ openssl pkcs12 -export -in cert.pem -inkey key.pem -certfile ca.pem \
 
 ```kotlin
 dependencies {
-    implementation("io.modelcontextprotocol.sdk:mcp:0.17.2")
+    implementation("io.modelcontextprotocol.sdk:mcp:1.1.0")
     implementation(project(":ans-sdk-agent-client"))
 }
 ```

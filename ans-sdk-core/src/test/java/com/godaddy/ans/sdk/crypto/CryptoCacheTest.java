@@ -8,6 +8,7 @@ import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
 import java.security.Signature;
+import java.security.SignatureException;
 import java.security.spec.ECGenParameterSpec;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -17,6 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Unit tests for {@link CryptoCache}.
@@ -246,6 +248,74 @@ class CryptoCacheTest {
         boolean result = CryptoCache.verifyEs256(differentData, signature, keyPair.getPublic());
 
         assertThat(result).isFalse();
+    }
+
+    @Test
+    @DisplayName("cleanup should remove ThreadLocal entries and allow re-initialization")
+    void cleanupShouldRemoveThreadLocalEntries() {
+        // Use cache to initialize ThreadLocals
+        byte[] data = "test data".getBytes(StandardCharsets.UTF_8);
+        CryptoCache.sha256(data);
+        CryptoCache.sha512(data);
+
+        // Cleanup should not throw
+        CryptoCache.cleanup();
+
+        // Cache should still work after cleanup (re-initializes ThreadLocals)
+        byte[] result = CryptoCache.sha256(data);
+        assertThat(result).hasSize(32);
+    }
+
+    @Test
+    @DisplayName("verifyEs256 should recover after SignatureException")
+    void verifyEs256ShouldRecoverAfterSignatureException() throws Exception {
+        KeyPairGenerator keyGen = KeyPairGenerator.getInstance("EC");
+        keyGen.initialize(new ECGenParameterSpec("secp256r1"));
+        KeyPair keyPair = keyGen.generateKeyPair();
+
+        byte[] data = "test data".getBytes(StandardCharsets.UTF_8);
+
+        // Trigger a SignatureException with a malformed signature
+        byte[] malformedSignature = new byte[]{0x00, 0x01, 0x02};
+        assertThatThrownBy(() -> CryptoCache.verifyEs256(data, malformedSignature, keyPair.getPublic()))
+            .isInstanceOf(SignatureException.class);
+
+        // After the exception, a subsequent valid call should succeed (ThreadLocal was reset)
+        Signature signer = Signature.getInstance("SHA256withECDSA");
+        signer.initSign(keyPair.getPrivate());
+        signer.update(data);
+        byte[] validSignature = signer.sign();
+
+        boolean result = CryptoCache.verifyEs256(data, validSignature, keyPair.getPublic());
+        assertThat(result).isTrue();
+    }
+
+    @Test
+    @DisplayName("verifyEs256P1363 should recover after InvalidKeyException")
+    void verifyEs256P1363ShouldRecoverAfterInvalidKeyException() throws Exception {
+        KeyPairGenerator keyGen = KeyPairGenerator.getInstance("EC");
+        keyGen.initialize(new ECGenParameterSpec("secp256r1"));
+        KeyPair keyPair = keyGen.generateKeyPair();
+
+        byte[] data = "test data".getBytes(StandardCharsets.UTF_8);
+
+        // Trigger an InvalidKeyException with an RSA key (wrong type for EC)
+        KeyPairGenerator rsaGen = KeyPairGenerator.getInstance("RSA");
+        rsaGen.initialize(2048);
+        java.security.PublicKey rsaKey = rsaGen.generateKeyPair().getPublic();
+
+        assertThatThrownBy(
+            () -> CryptoCache.verifyEs256P1363(data, new byte[64], rsaKey))
+            .isInstanceOf(java.security.InvalidKeyException.class);
+
+        // After the exception, a subsequent valid call should succeed (ThreadLocal was reset)
+        Signature signer = Signature.getInstance("SHA256withECDSAinP1363Format");
+        signer.initSign(keyPair.getPrivate());
+        signer.update(data);
+        byte[] validSignature = signer.sign();
+
+        boolean result = CryptoCache.verifyEs256P1363(data, validSignature, keyPair.getPublic());
+        assertThat(result).isTrue();
     }
 
     @Test

@@ -41,62 +41,6 @@ class StatusTokenTest {
             assertThat(claims.notBeforeTime()).isNull();
             assertThat(claims.issuedAtTime()).isNull();
         }
-
-        @Test
-        @DisplayName("Should check expiration correctly")
-        void shouldCheckExpirationCorrectly() {
-            long futureExp = Instant.now().plusSeconds(3600).getEpochSecond();
-            long pastExp = Instant.now().minusSeconds(3600).getEpochSecond();
-
-            CwtClaims futureClaims = new CwtClaims(null, null, null, futureExp, null, null);
-            CwtClaims pastClaims = new CwtClaims(null, null, null, pastExp, null, null);
-            CwtClaims noClaims = new CwtClaims(null, null, null, null, null, null);
-
-            assertThat(futureClaims.isExpired(Instant.now())).isFalse();
-            assertThat(pastClaims.isExpired(Instant.now())).isTrue();
-            assertThat(noClaims.isExpired(Instant.now())).isFalse();
-        }
-
-        @Test
-        @DisplayName("Should check expiration with clock skew")
-        void shouldCheckExpirationWithClockSkew() {
-            // Token that expired 30 seconds ago
-            long exp = Instant.now().minusSeconds(30).getEpochSecond();
-            CwtClaims claims = new CwtClaims(null, null, null, exp, null, null);
-
-            // Without clock skew, it's expired
-            assertThat(claims.isExpired(Instant.now(), 0)).isTrue();
-
-            // With 60 second clock skew, it's still valid
-            assertThat(claims.isExpired(Instant.now(), 60)).isFalse();
-        }
-
-        @Test
-        @DisplayName("Should check not-before correctly")
-        void shouldCheckNotBeforeCorrectly() {
-            long futureNbf = Instant.now().plusSeconds(3600).getEpochSecond();
-            long pastNbf = Instant.now().minusSeconds(3600).getEpochSecond();
-
-            CwtClaims futureClaims = new CwtClaims(null, null, null, null, futureNbf, null);
-            CwtClaims pastClaims = new CwtClaims(null, null, null, null, pastNbf, null);
-
-            assertThat(futureClaims.isNotYetValid(Instant.now())).isTrue();
-            assertThat(pastClaims.isNotYetValid(Instant.now())).isFalse();
-        }
-
-        @Test
-        @DisplayName("Should check not-before with clock skew")
-        void shouldCheckNotBeforeWithClockSkew() {
-            // Token that becomes valid 30 seconds from now
-            long nbf = Instant.now().plusSeconds(30).getEpochSecond();
-            CwtClaims claims = new CwtClaims(null, null, null, null, nbf, null);
-
-            // Without clock skew, it's not yet valid
-            assertThat(claims.isNotYetValid(Instant.now(), 0)).isTrue();
-
-            // With 60 second clock skew, it's valid
-            assertThat(claims.isNotYetValid(Instant.now(), 60)).isFalse();
-        }
     }
 
     @Nested
@@ -389,8 +333,8 @@ class StatusTokenTest {
 
             StatusToken token = new StatusToken(
                 "id", StatusToken.Status.ACTIVE, null, null,
-                null, null, List.of(), List.of(cert1, cert2),
-                Map.of(), null, null, null, null
+                null, List.of(), List.of(cert1, cert2),
+                Map.of(), null
             );
 
             assertThat(token.serverCertFingerprints()).containsExactly("fp1", "fp2");
@@ -406,8 +350,8 @@ class StatusTokenTest {
 
             StatusToken token = new StatusToken(
                 "id", StatusToken.Status.ACTIVE, null, null,
-                null, null, List.of(cert1, cert2), List.of(),
-                Map.of(), null, null, null, null
+                null, List.of(cert1, cert2), List.of(),
+                Map.of(), null
             );
 
             assertThat(token.identityCertFingerprints()).containsExactly("id1", "id2");
@@ -423,8 +367,8 @@ class StatusTokenTest {
 
             StatusToken token = new StatusToken(
                 "id", StatusToken.Status.ACTIVE, null, null,
-                null, null, List.of(), List.of(cert1, cert2),
-                Map.of(), null, null, null, null
+                null, List.of(), List.of(cert1, cert2),
+                Map.of(), null
             );
 
             assertThat(token.serverCertFingerprints()).containsExactly("fp1");
@@ -496,13 +440,9 @@ class StatusTokenTest {
             issuedAt,
             expiresAt,
             "ans://test",
-            "agent.example.com",
             List.of(),
             List.of(),
             Map.of(),
-            null,
-            null,
-            null,
             null
         );
     }

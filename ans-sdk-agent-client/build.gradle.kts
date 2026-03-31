@@ -7,6 +7,7 @@ val junitVersion: String by project
 val mockitoVersion: String by project
 val assertjVersion: String by project
 val wiremockVersion: String by project
+val cborVersion: String by project
 
 dependencies {
     // Core and crypto modules
@@ -42,6 +43,6 @@ dependencies {
     testImplementation("org.assertj:assertj-core:$assertjVersion")
     testImplementation("org.wiremock:wiremock:$wiremockVersion")
     testImplementation("io.projectreactor:reactor-test:$reactorVersion")
-    testImplementation("com.upokecenter:cbor:4.5.4")
+    testImplementation("com.upokecenter:cbor:$cborVersion")
     testRuntimeOnly("org.slf4j:slf4j-simple:$slf4jVersion")
 }

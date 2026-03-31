@@ -3,10 +3,11 @@ package com.godaddy.ans.sdk.transparency.verification;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.github.benmanes.caffeine.cache.Expiry;
+import com.godaddy.ans.sdk.crypto.CryptoCache;
+import com.godaddy.ans.sdk.transparency.TransparencyClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.security.NoSuchAlgorithmException;
 import java.security.cert.CertificateEncodingException;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
@@ -36,7 +37,7 @@ import java.util.function.Predicate;
  * <h2>Usage</h2>
  * <pre>{@code
  * BadgeVerificationService verifier = CachingBadgeVerificationService.builder()
- *     .delegate(BadgeVerificationService.create())
+ *     .delegate(BadgeVerificationService.create(TransparencyClient.createOte()))
  *     .cacheTtl(Duration.ofMinutes(15))
  *     .build();
  *
@@ -173,15 +174,11 @@ public final class CachingBadgeVerificationService implements ServerVerifier {
     private String computeFingerprint(X509Certificate cert) {
         try {
             byte[] encoded = cert.getEncoded();
-            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(encoded);
+            byte[] hash = CryptoCache.sha256(encoded);
             return HexFormat.of().formatHex(hash);
         } catch (CertificateEncodingException e) {
             LOG.warn("Failed to encode certificate for fingerprint: {}", e.getMessage());
             return null;
-        } catch (NoSuchAlgorithmException e) {
-            // SHA-256 is guaranteed to be available in all Java implementations
-            throw new IllegalStateException("SHA-256 algorithm not available", e);
         }
     }
 
@@ -236,13 +233,14 @@ public final class CachingBadgeVerificationService implements ServerVerifier {
     }
 
     /**
-     * Creates a caching service with default configuration.
+     * Creates a caching service wrapping a badge service for the given transparency client.
      *
-     * @return a new caching service wrapping the default verification service
+     * @param transparencyClient the transparency client to use
+     * @return a new caching service
      */
-    public static CachingBadgeVerificationService create() {
+    public static CachingBadgeVerificationService create(TransparencyClient transparencyClient) {
         return builder()
-            .delegate(BadgeVerificationService.create())
+            .delegate(BadgeVerificationService.create(transparencyClient))
             .build();
     }
 

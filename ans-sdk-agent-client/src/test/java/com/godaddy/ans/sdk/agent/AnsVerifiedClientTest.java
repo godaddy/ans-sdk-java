@@ -25,6 +25,7 @@ import static com.github.tomakehurst.wiremock.client.WireMock.urlEqualTo;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -35,6 +36,12 @@ class AnsVerifiedClientTest {
 
     @Mock
     private TransparencyClient mockTransparencyClient;
+
+    @org.junit.jupiter.api.BeforeEach
+    void setUp() {
+        lenient().when(mockTransparencyClient.getBaseUrl())
+            .thenReturn("https://transparency.test.example.com");
+    }
 
     @Nested
     @DisplayName("Builder tests")
@@ -55,7 +62,7 @@ class AnsVerifiedClientTest {
             assertThat(client).isNotNull();
             assertThat(client.sslContext()).isNotNull();
             assertThat(client.policy()).isEqualTo(VerificationPolicy.SCITT_REQUIRED);
-            assertThat(client.scittHeadersAsync().join()).isEmpty(); // No agent ID set
+            assertThat(client.fetchScittHeadersAsync().join()).isEmpty(); // No agent ID set
             client.close();
         }
 
@@ -137,7 +144,7 @@ class AnsVerifiedClientTest {
                 .policy(VerificationPolicy.PKI_ONLY)
                 .build();
 
-            assertThat(client.scittHeadersAsync().join()).isEmpty();
+            assertThat(client.fetchScittHeadersAsync().join()).isEmpty();
             client.close();
         }
 
@@ -162,9 +169,9 @@ class AnsVerifiedClientTest {
                 .policy(VerificationPolicy.SCITT_REQUIRED)
                 .build();
 
-            assertThat(client.scittHeadersAsync().join()).isNotEmpty();
-            assertThat(client.scittHeadersAsync().join()).containsKey("x-scitt-receipt");
-            assertThat(client.scittHeadersAsync().join()).containsKey("x-ans-status-token");
+            assertThat(client.fetchScittHeadersAsync().join()).isNotEmpty();
+            assertThat(client.fetchScittHeadersAsync().join()).containsKey("x-scitt-receipt");
+            assertThat(client.fetchScittHeadersAsync().join()).containsKey("x-ans-status-token");
             client.close();
         }
 
@@ -188,7 +195,7 @@ class AnsVerifiedClientTest {
                 .build();
 
             // Should not throw, just have empty headers (lazy fetch fails gracefully)
-            assertThat(client.scittHeadersAsync().join()).isEmpty();
+            assertThat(client.fetchScittHeadersAsync().join()).isEmpty();
             client.close();
         }
     }
@@ -224,7 +231,7 @@ class AnsVerifiedClientTest {
                 .policy(VerificationPolicy.PKI_ONLY)
                 .build();
 
-            assertThatThrownBy(() -> client.scittHeadersAsync().join().put("key", "value"))
+            assertThatThrownBy(() -> client.fetchScittHeadersAsync().join().put("key", "value"))
                 .isInstanceOf(UnsupportedOperationException.class);
             client.close();
         }
@@ -247,7 +254,7 @@ class AnsVerifiedClientTest {
                 .policy(VerificationPolicy.PKI_ONLY)
                 .build();
 
-            CompletableFuture<Map<String, String>> future = client.scittHeadersAsync();
+            CompletableFuture<Map<String, String>> future = client.fetchScittHeadersAsync();
             assertThat(future).isCompletedWithValue(Map.of());
             client.close();
         }
@@ -272,7 +279,7 @@ class AnsVerifiedClientTest {
                 .policy(VerificationPolicy.SCITT_REQUIRED)
                 .build();
 
-            CompletableFuture<Map<String, String>> future = client.scittHeadersAsync();
+            CompletableFuture<Map<String, String>> future = client.fetchScittHeadersAsync();
             assertThat(future).succeedsWithin(Duration.ofSeconds(5));
 
             Map<String, String> headers = future.join();
@@ -302,9 +309,9 @@ class AnsVerifiedClientTest {
                 .build();
 
             // First call triggers fetch
-            Map<String, String> headers1 = client.scittHeadersAsync().join();
+            Map<String, String> headers1 = client.fetchScittHeadersAsync().join();
             // Second call should return cached (same instance)
-            Map<String, String> headers2 = client.scittHeadersAsync().join();
+            Map<String, String> headers2 = client.fetchScittHeadersAsync().join();
 
             assertThat(headers1).isSameAs(headers2);
             client.close();
@@ -331,8 +338,8 @@ class AnsVerifiedClientTest {
                 .build();
 
             // Both calls should return the same cached result
-            Map<String, String> headers1 = client.scittHeadersAsync().join();
-            Map<String, String> headers2 = client.scittHeadersAsync().join();
+            Map<String, String> headers1 = client.fetchScittHeadersAsync().join();
+            Map<String, String> headers2 = client.fetchScittHeadersAsync().join();
 
             assertThat(headers1).isSameAs(headers2);
             client.close();
@@ -360,23 +367,22 @@ class AnsVerifiedClientTest {
     }
 
     @Nested
-    @DisplayName("Default TransparencyClient creation")
-    class DefaultTransparencyClientTests {
+    @DisplayName("TransparencyClient requirement")
+    class TransparencyClientRequirementTests {
 
         @Test
-        @DisplayName("Should create default TransparencyClient when not provided")
-        void shouldCreateDefaultTransparencyClient() throws Exception {
+        @DisplayName("Should throw when TransparencyClient not provided")
+        void shouldThrowWithoutTransparencyClient() throws Exception {
             KeyStore keyStore = KeyStore.getInstance("PKCS12");
             keyStore.load(null, "password".toCharArray());
 
-            // Build without providing transparencyClient - it should create one
-            AnsVerifiedClient client = AnsVerifiedClient.builder()
+            // Build without providing transparencyClient - should throw
+            assertThatThrownBy(() -> AnsVerifiedClient.builder()
                 .keyStore(keyStore, "password".toCharArray())
-                .policy(VerificationPolicy.PKI_ONLY) // No SCITT, so no network calls
-                .build();
-
-            assertThat(client.transparencyClient()).isNotNull();
-            client.close();
+                .policy(VerificationPolicy.PKI_ONLY)
+                .build())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("TransparencyClient is required");
         }
     }
 
@@ -397,7 +403,7 @@ class AnsVerifiedClientTest {
                 .build();
 
             assertThat(client.policy()).isEqualTo(VerificationPolicy.BADGE_REQUIRED);
-            assertThat(client.scittHeadersAsync().join()).isEmpty(); // BADGE_REQUIRED has SCITT disabled
+            assertThat(client.fetchScittHeadersAsync().join()).isEmpty(); // BADGE_REQUIRED has SCITT disabled
             client.close();
         }
 
@@ -438,7 +444,7 @@ class AnsVerifiedClientTest {
                 .build();
 
             assertThat(client.policy()).isEqualTo(VerificationPolicy.SCITT_ENHANCED);
-            assertThat(client.scittHeadersAsync().join()).isNotEmpty();
+            assertThat(client.fetchScittHeadersAsync().join()).isNotEmpty();
             client.close();
         }
     }
@@ -461,7 +467,7 @@ class AnsVerifiedClientTest {
                 .build();
 
             // Should not have tried to fetch headers for blank agent ID
-            assertThat(client.scittHeadersAsync().join()).isEmpty();
+            assertThat(client.fetchScittHeadersAsync().join()).isEmpty();
             client.close();
         }
 
@@ -478,7 +484,7 @@ class AnsVerifiedClientTest {
                 .policy(VerificationPolicy.SCITT_REQUIRED)
                 .build();
 
-            assertThat(client.scittHeadersAsync().join()).isEmpty();
+            assertThat(client.fetchScittHeadersAsync().join()).isEmpty();
             client.close();
         }
     }
@@ -568,8 +574,8 @@ class AnsVerifiedClientTest {
         }
 
         @Test
-        @DisplayName("SCITT_ADVISORY: should allow fallback when no SCITT headers present")
-        void scittAdvisoryShouldAllowFallbackWhenNoHeaders(WireMockRuntimeInfo wmRuntimeInfo) throws Exception {
+        @DisplayName("SCITT_FALLBACK: should allow fallback when no SCITT headers present")
+        void scittFallbackShouldAllowFallbackWhenNoHeaders(WireMockRuntimeInfo wmRuntimeInfo) throws Exception {
             // Stub preflight to return no SCITT headers
             stubFor(head(urlEqualTo("/mcp"))
                 .willReturn(aResponse()
@@ -580,7 +586,7 @@ class AnsVerifiedClientTest {
 
             // SCITT ADVISORY allows fallback when no headers present
             VerificationPolicy scittAdvisory = VerificationPolicy.custom()
-                .scitt(VerificationMode.ADVISORY)
+                .scitt(VerificationMode.FALLBACK_ALLOWED)
                 .build();
 
             AnsVerifiedClient client = AnsVerifiedClient.builder()
@@ -600,7 +606,7 @@ class AnsVerifiedClientTest {
         }
 
         @Test
-        @DisplayName("SCITT_ADVISORY: should throw when SCITT headers present but invalid")
+        @DisplayName("SCITT_FALLBACK: should throw when SCITT headers present but invalid")
         void scittAdvisoryShouldThrowWhenHeadersInvalid(WireMockRuntimeInfo wmRuntimeInfo) throws Exception {
             // Stub preflight to return invalid SCITT headers
             stubFor(head(urlEqualTo("/mcp"))
@@ -679,7 +685,7 @@ class AnsVerifiedClientTest {
 
             // Use SCITT ADVISORY - server returns no headers (fallback allowed)
             VerificationPolicy scittAdvisory = VerificationPolicy.custom()
-                .scitt(VerificationMode.ADVISORY)
+                .scitt(VerificationMode.FALLBACK_ALLOWED)
                 .build();
 
             AnsVerifiedClient client = AnsVerifiedClient.builder()
@@ -690,7 +696,7 @@ class AnsVerifiedClientTest {
                 .build();
 
             // Verify client has SCITT headers to send
-            assertThat(client.scittHeadersAsync().join()).isNotEmpty();
+            assertThat(client.fetchScittHeadersAsync().join()).isNotEmpty();
 
             String serverUrl = wmRuntimeInfo.getHttpBaseUrl() + "/mcp";
             // Server returns no SCITT headers, but ADVISORY mode allows fallback

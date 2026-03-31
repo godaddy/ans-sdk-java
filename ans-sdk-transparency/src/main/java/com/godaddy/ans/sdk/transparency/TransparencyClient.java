@@ -44,12 +44,17 @@ import java.util.concurrent.CompletableFuture;
  * String identityFingerprint = log.getIdentityCertFingerprint();
  * }</pre>
  */
-public final class TransparencyClient {
+public final class TransparencyClient implements AutoCloseable {
 
     /**
-     * Default base URL for the transparency log.
+     * OTE base URL for the transparency log.
      */
-    public static final String DEFAULT_BASE_URL = "https://transparency.ans.ote-godaddy.com";
+    public static final String OTE_BASE_URL = "https://transparency.ans.ote-godaddy.com";
+
+    /**
+     * Production base URL for the transparency log.
+     */
+    public static final String PRODUCTION_BASE_URL = "https://transparency.ans.godaddy.com";
 
     /**
      * Default cache TTL for the root public key (24 hours).
@@ -80,12 +85,21 @@ public final class TransparencyClient {
     }
 
     /**
-     * Creates a TransparencyClient with default configuration.
+     * Creates a TransparencyClient for the OTE environment.
      *
-     * @return a new TransparencyClient with defaults
+     * @return a new TransparencyClient pointing at OTE
      */
-    public static TransparencyClient create() {
-        return builder().build();
+    public static TransparencyClient createOte() {
+        return builder().baseUrl(OTE_BASE_URL).build();
+    }
+
+    /**
+     * Creates a TransparencyClient for the production environment.
+     *
+     * @return a new TransparencyClient pointing at production
+     */
+    public static TransparencyClient createProduction() {
+        return builder().baseUrl(PRODUCTION_BASE_URL).build();
     }
 
     // ==================== Agent Log Operations (Sync) ====================
@@ -243,9 +257,9 @@ public final class TransparencyClient {
      * potentially recover from a key rotation scenario.</p>
      *
      * @param artifactIssuedAt the issued-at timestamp from the SCITT artifact
-     * @return the refresh decision indicating whether to retry verification
+     * @return a future containing the refresh decision indicating whether to retry verification
      */
-    public RefreshDecision refreshRootKeysIfNeeded(Instant artifactIssuedAt) {
+    public CompletableFuture<RefreshDecision> refreshRootKeysIfNeeded(Instant artifactIssuedAt) {
         return service.refreshRootKeysIfNeeded(artifactIssuedAt);
     }
 
@@ -350,11 +364,19 @@ public final class TransparencyClient {
     }
 
     /**
+     * Closes this client and releases resources held by the underlying service.
+     */
+    @Override
+    public void close() {
+        service.close();
+    }
+
+    /**
      * Builder for constructing a TransparencyClient.
      */
     public static final class Builder {
 
-        private String baseUrl = DEFAULT_BASE_URL;
+        private String baseUrl;
         private Duration connectTimeout = DEFAULT_CONNECT_TIMEOUT;
         private Duration readTimeout = DEFAULT_READ_TIMEOUT;
         private Duration rootKeyCacheTtl = DEFAULT_ROOT_KEY_CACHE_TTL;
@@ -363,14 +385,14 @@ public final class TransparencyClient {
         }
 
         /**
-         * Sets the base URL for the transparency log API.
+         * Sets the base URL for the transparency log API (required).
          *
          * <p><b>Security note:</b> Only URLs pointing to trusted SCITT domains
          * (defined in {@link TrustedDomainRegistry}) are accepted. This prevents
          * root key substitution attacks where a malicious transparency log could
          * provide a forged root key.</p>
          *
-         * @param baseUrl the base URL (default: https://transparency.ans.ote-godaddy.com)
+         * @param baseUrl the base URL (e.g., {@link #OTE_BASE_URL} or {@link #PRODUCTION_BASE_URL})
          * @return this builder
          */
         public Builder baseUrl(String baseUrl) {
@@ -421,6 +443,11 @@ public final class TransparencyClient {
          * @throws SecurityException if the configured baseUrl is not a trusted SCITT domain
          */
         public TransparencyClient build() {
+            if (baseUrl == null || baseUrl.isBlank()) {
+                throw new IllegalStateException(
+                    "baseUrl is required. Use .baseUrl(TransparencyClient.OTE_BASE_URL) "
+                    + "or .baseUrl(TransparencyClient.PRODUCTION_BASE_URL)");
+            }
             validateTrustedDomain();
             return new TransparencyClient(baseUrl, connectTimeout, readTimeout, rootKeyCacheTtl);
         }

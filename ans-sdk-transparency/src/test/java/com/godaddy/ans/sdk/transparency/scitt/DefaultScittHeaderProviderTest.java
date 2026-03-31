@@ -186,7 +186,11 @@ class DefaultScittHeaderProviderTest {
             byte[] tokenBytes = createValidStatusTokenBytes();
             String base64Token = Base64.getEncoder().encodeToString(tokenBytes);
 
-            Map<String, String> headers = Map.of(ScittHeaders.STATUS_TOKEN_HEADER, base64Token);
+            byte[] receiptBytes = createValidReceiptBytes();
+            String base64Receipt = Base64.getEncoder().encodeToString(receiptBytes);
+
+            Map<String, String> headers = Map.of(ScittHeaders.SCITT_RECEIPT_HEADER, base64Receipt,
+                    ScittHeaders.STATUS_TOKEN_HEADER, base64Token);
 
             Optional<ScittHeaderProvider.ScittArtifacts> result = provider.extractArtifacts(headers);
 
@@ -202,7 +206,11 @@ class DefaultScittHeaderProviderTest {
             byte[] receiptBytes = createValidReceiptBytes();
             String base64Receipt = Base64.getEncoder().encodeToString(receiptBytes);
 
-            Map<String, String> headers = Map.of(ScittHeaders.SCITT_RECEIPT_HEADER, base64Receipt);
+            byte[] tokenBytes = createValidStatusTokenBytes();
+            String base64Token = Base64.getEncoder().encodeToString(tokenBytes);
+
+            Map<String, String> headers = Map.of(ScittHeaders.SCITT_RECEIPT_HEADER, base64Receipt,
+                    ScittHeaders.STATUS_TOKEN_HEADER, base64Token);
 
             Optional<ScittHeaderProvider.ScittArtifacts> result = provider.extractArtifacts(headers);
 
@@ -231,33 +239,29 @@ class DefaultScittHeaderProviderTest {
         }
 
         @Test
-        @DisplayName("Should throw when headers present but invalid Base64")
-        void shouldThrowOnInvalidBase64() {
+        @DisplayName("Should return empty when headers present but invalid Base64")
+        void shouldReturnEmptyOnInvalidBase64() {
             DefaultScittHeaderProvider provider = new DefaultScittHeaderProvider();
 
             Map<String, String> headers = Map.of(ScittHeaders.STATUS_TOKEN_HEADER, "not-valid-base64!!!");
 
-            // Headers present but parse failed should throw, not return empty
-            // This allows callers to distinguish "no headers" from "headers present but malformed"
-            assertThatThrownBy(() -> provider.extractArtifacts(headers))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("SCITT headers present but failed to parse")
-                .hasMessageContaining("Invalid Base64");
+            // Headers present but all artifacts failed to parse returns empty
+            Optional<ScittHeaderProvider.ScittArtifacts> result = provider.extractArtifacts(headers);
+            assertThat(result).isEmpty();
         }
 
         @Test
-        @DisplayName("Should throw when headers present but invalid CBOR")
-        void shouldThrowOnInvalidCbor() {
+        @DisplayName("Should return empty when headers present but invalid CBOR")
+        void shouldReturnEmptyOnInvalidCbor() {
             DefaultScittHeaderProvider provider = new DefaultScittHeaderProvider();
             byte[] invalidCbor = {0x01, 0x02, 0x03};
 
             Map<String, String> headers = Map.of(
                 ScittHeaders.STATUS_TOKEN_HEADER, Base64.getEncoder().encodeToString(invalidCbor));
 
-            // Headers present but parse failed should throw, not return empty
-            assertThatThrownBy(() -> provider.extractArtifacts(headers))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("SCITT headers present but failed to parse");
+            // Headers present but all artifacts failed to parse returns empty
+            Optional<ScittHeaderProvider.ScittArtifacts> result = provider.extractArtifacts(headers);
+            assertThat(result).isEmpty();
         }
     }
 
@@ -272,7 +276,7 @@ class DefaultScittHeaderProviderTest {
             StatusToken token = createMockToken();
 
             ScittHeaderProvider.ScittArtifacts artifacts =
-                new ScittHeaderProvider.ScittArtifacts(receipt, token, new byte[0], new byte[0]);
+                new ScittHeaderProvider.ScittArtifacts(receipt, token);
 
             assertThat(artifacts.isComplete()).isTrue();
         }
@@ -283,7 +287,7 @@ class DefaultScittHeaderProviderTest {
             StatusToken token = createMockToken();
 
             ScittHeaderProvider.ScittArtifacts artifacts =
-                new ScittHeaderProvider.ScittArtifacts(null, token, null, new byte[0]);
+                new ScittHeaderProvider.ScittArtifacts(null, token);
 
             assertThat(artifacts.isComplete()).isFalse();
         }
@@ -294,7 +298,7 @@ class DefaultScittHeaderProviderTest {
             ScittReceipt receipt = createMockReceipt();
 
             ScittHeaderProvider.ScittArtifacts artifacts =
-                new ScittHeaderProvider.ScittArtifacts(receipt, null, new byte[0], null);
+                new ScittHeaderProvider.ScittArtifacts(receipt, null);
 
             assertThat(artifacts.isComplete()).isFalse();
         }
@@ -305,7 +309,7 @@ class DefaultScittHeaderProviderTest {
             ScittReceipt receipt = createMockReceipt();
 
             ScittHeaderProvider.ScittArtifacts artifacts =
-                new ScittHeaderProvider.ScittArtifacts(receipt, null, new byte[0], null);
+                new ScittHeaderProvider.ScittArtifacts(receipt, null);
 
             assertThat(artifacts.isPresent()).isTrue();
         }
@@ -314,7 +318,7 @@ class DefaultScittHeaderProviderTest {
         @DisplayName("isPresent should return false when both null")
         void isPresentShouldReturnFalseWhenBothNull() {
             ScittHeaderProvider.ScittArtifacts artifacts =
-                new ScittHeaderProvider.ScittArtifacts(null, null, null, null);
+                new ScittHeaderProvider.ScittArtifacts(null, null);
 
             assertThat(artifacts.isPresent()).isFalse();
         }
@@ -385,13 +389,9 @@ class DefaultScittHeaderProviderTest {
             Instant.now(),
             Instant.now().plusSeconds(3600),
             "test.ans",
-            "agent.example.com",
             java.util.List.of(),
             java.util.List.of(),
             java.util.Map.of(),
-            null,
-            null,
-            null,
             null
         );
     }

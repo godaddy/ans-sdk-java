@@ -64,6 +64,7 @@ public class ScittLifecycle implements SmartLifecycle {
                 LOGGER.info("Stopping SCITT artifact background refresh for agent: {}", agentId);
                 artifactManager.stopBackgroundRefresh(agentId);
             }
+            artifactManager.close();
             running = false;
         }
     }

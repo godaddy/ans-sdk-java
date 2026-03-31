@@ -45,7 +45,7 @@ class ScittPreVerifyResultTest {
         @DisplayName("verified() should create result with all components")
         void verifiedShouldCreateResultWithAllComponents() {
             ScittExpectation expectation = ScittExpectation.verified(
-                List.of("fp1"), List.of("fp2"), "host", "ans.test", Map.of(), null);
+                List.of("fp1"), List.of("fp2"), "ans.test", Map.of(), null);
             ScittReceipt receipt = createMockReceipt();
             StatusToken token = createMockToken();
 
@@ -67,7 +67,7 @@ class ScittPreVerifyResultTest {
         @DisplayName("Should access all record components")
         void shouldAccessAllRecordComponents() {
             ScittExpectation expectation = ScittExpectation.verified(
-                List.of("fp1"), List.of(), "host", "ans.test", Map.of(), null);
+                List.of("fp1"), List.of(), "ans.test", Map.of(), null);
             ScittReceipt receipt = createMockReceipt();
             StatusToken token = createMockToken();
 
@@ -104,13 +104,9 @@ class ScittPreVerifyResultTest {
             Instant.now(),
             Instant.now().plusSeconds(3600),
             "test.ans",
-            "agent.example.com",
             List.of(),
             List.of(),
             Map.of(),
-            null,
-            null,
-            null,
             null
         );
     }

@@ -1,5 +1,6 @@
 package com.godaddy.ans.sdk.agent.verification;
 
+import com.godaddy.ans.sdk.crypto.CertificateUtils;
 import com.godaddy.ans.sdk.crypto.CryptoCache;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -129,10 +130,6 @@ public final class TlsaUtils {
         if (bytes == null) {
             return "null";
         }
-        StringBuilder sb = new StringBuilder(bytes.length * 2);
-        for (byte b : bytes) {
-            sb.append(String.format("%02x", b));
-        }
-        return sb.toString();
+        return CertificateUtils.bytesToHex(bytes);
     }
 }

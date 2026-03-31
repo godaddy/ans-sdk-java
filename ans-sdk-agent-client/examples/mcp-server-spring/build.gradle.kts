@@ -8,6 +8,7 @@ plugins {
 }
 
 val springBootVersion = "3.2.5"
+val bouncyCastleVersion: String by project
 
 application {
     mainClass.set("com.godaddy.ans.examples.mcp.spring.McpServerSpringApplication")
@@ -34,7 +35,7 @@ dependencies {
     implementation(project(":ans-sdk-agent-client"))
 
     // Bouncy Castle for PEM certificate loading
-    implementation("org.bouncycastle:bcpkix-jdk18on:1.80")
+    implementation("org.bouncycastle:bcpkix-jdk18on:$bouncyCastleVersion")
 
 }
 

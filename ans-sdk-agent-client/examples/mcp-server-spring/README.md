@@ -107,17 +107,11 @@ Security features provided by `DefaultClientRequestVerifier`:
 
 ```java
 // ScittHeaderResponseFilter.java adds headers to all responses
-byte[] receiptBytes = artifactManager.getReceiptBytes(agentId)
-    .get(5, TimeUnit.SECONDS);
-byte[] tokenBytes = artifactManager.getStatusTokenBytes(agentId)
+Map<String, String> headers = artifactManager.getOutgoingHeaders(agentId)
     .get(5, TimeUnit.SECONDS);
 
-if (receiptBytes != null) {
-    response.addHeader("X-SCITT-Receipt", Base64.getEncoder().encodeToString(receiptBytes));
-}
-if (tokenBytes != null) {
-    response.addHeader("X-ANS-Status-Token", Base64.getEncoder().encodeToString(tokenBytes));
-}
+// Add SCITT headers to response (X-SCITT-Receipt, X-ANS-Status-Token)
+headers.forEach(httpResponse::addHeader);
 ```
 
 ### 4. Health Monitoring
@@ -223,13 +217,25 @@ ans:
 ## Testing with MCP Client
 
 ```bash
-# Terminal 1: Start Spring server
-./gradlew :ans-sdk-agent-client:examples:mcp-server-spring:bootRun
+# Terminal 1: Set server environment variables and start Spring server
+export SSL_KEYSTORE_PATH=/path/to/server.p12
+export SSL_KEYSTORE_PASSWORD=changeit
+export SSL_TRUSTSTORE_PATH=/path/to/truststore.p12
+export SSL_TRUSTSTORE_PASSWORD=changeit
+export ANS_AGENT_ID=your-server-agent-uuid
 
-# Terminal 2: Run client example (once server is up)
+./gradlew :ans-sdk-agent-client:examples:mcp-server-spring:run
+
+# Terminal 2: Set client environment variables and run client (once server is up)
+export AGENT_ID=your-client-agent-uuid
+export KEYSTORE_PATH=/path/to/client.p12
+export KEYSTORE_PASS=changeit
+
 ./gradlew :ans-sdk-agent-client:examples:mcp-client:run \
   --args="https://localhost:8443/mcp"
 ```
+
+See `application.yml` for additional configuration options (verification policy, SCITT domain, etc.).
 
 ## Dependencies
 
