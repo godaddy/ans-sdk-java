@@ -8,7 +8,6 @@ import com.godaddy.ans.sdk.config.AnsConfiguration;
 import com.godaddy.ans.sdk.discovery.DiscoveryClient;
 import com.godaddy.ans.sdk.registration.RegistrationClient;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -20,17 +19,12 @@ import org.springframework.context.annotation.Bean;
  * <p>Automatically creates {@link AnsConfiguration}, {@link RegistrationClient},
  * and {@link DiscoveryClient} beans from {@code ans.*} application properties.</p>
  *
- * <p>This auto-configuration is enabled when:</p>
- * <ul>
- *   <li>{@code ans.enabled} is {@code true} (default)</li>
- *   <li>{@link AnsConfiguration} is on the classpath</li>
- * </ul>
+ * <p>This auto-configuration is enabled when {@code ans.enabled} is {@code true} (default).</p>
  *
  * <p>All beans are conditional on missing beans, so users can override
  * any bean by defining their own.</p>
  */
 @AutoConfiguration
-@ConditionalOnClass(AnsConfiguration.class)
 @ConditionalOnProperty(prefix = "ans", name = "enabled", havingValue = "true", matchIfMissing = true)
 @EnableConfigurationProperties(AnsProperties.class)
 public class AnsAutoConfiguration {
@@ -122,14 +116,9 @@ public class AnsAutoConfiguration {
      */
     @Bean
     @ConditionalOnMissingBean
-    @ConditionalOnClass(RegistrationClient.class)
     public RegistrationClient registrationClient(AnsConfiguration configuration) {
         return RegistrationClient.builder()
-            .environment(configuration.getEnvironment())
-            .credentialsProvider(configuration.getCredentialsProvider())
-            .connectTimeout(configuration.getConnectTimeout())
-            .readTimeout(configuration.getReadTimeout())
-            .enableRetry(configuration.getMaxRetries())
+            .configuration(configuration)
             .build();
     }
 
@@ -141,14 +130,9 @@ public class AnsAutoConfiguration {
      */
     @Bean
     @ConditionalOnMissingBean
-    @ConditionalOnClass(DiscoveryClient.class)
     public DiscoveryClient discoveryClient(AnsConfiguration configuration) {
         return DiscoveryClient.builder()
-            .environment(configuration.getEnvironment())
-            .credentialsProvider(configuration.getCredentialsProvider())
-            .connectTimeout(configuration.getConnectTimeout())
-            .readTimeout(configuration.getReadTimeout())
-            .enableRetry(configuration.getMaxRetries())
+            .configuration(configuration)
             .build();
     }
 }

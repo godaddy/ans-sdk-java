@@ -252,8 +252,23 @@ public final class RegistrationClient {
     public static final class Builder {
 
         private final AnsConfiguration.Builder configBuilder = AnsConfiguration.builder();
+        private AnsConfiguration prebuiltConfiguration;
 
         private Builder() {
+        }
+
+        /**
+         * Uses a pre-built configuration directly.
+         *
+         * <p>When set, this configuration is used as-is and any values set via
+         * other builder methods are ignored.</p>
+         *
+         * @param configuration the pre-built configuration
+         * @return this builder
+         */
+        public Builder configuration(AnsConfiguration configuration) {
+            this.prebuiltConfiguration = configuration;
+            return this;
         }
 
         /**
@@ -328,7 +343,10 @@ public final class RegistrationClient {
          * @return a new RegistrationClient instance
          */
         public RegistrationClient build() {
-            return new RegistrationClient(configBuilder.build());
+            AnsConfiguration config = (prebuiltConfiguration != null)
+                ? prebuiltConfiguration
+                : configBuilder.build();
+            return new RegistrationClient(config);
         }
     }
 }
