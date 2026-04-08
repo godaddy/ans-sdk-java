@@ -3,6 +3,7 @@ package com.godaddy.ans.sdk.discovery;
 import com.github.tomakehurst.wiremock.junit5.WireMockRuntimeInfo;
 import com.github.tomakehurst.wiremock.junit5.WireMockTest;
 import com.godaddy.ans.sdk.auth.JwtCredentialsProvider;
+import com.godaddy.ans.sdk.config.AnsConfiguration;
 import com.godaddy.ans.sdk.config.Environment;
 import com.godaddy.ans.sdk.model.generated.AgentDetails;
 import com.godaddy.ans.sdk.model.generated.AgentLifecycleStatus;
@@ -114,6 +115,24 @@ class DiscoveryClientTest {
             .environment(Environment.OTE)
             .build())
             .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    @DisplayName("Should build client with pre-built configuration")
+    void shouldBuildClientWithPreBuiltConfiguration() {
+        AnsConfiguration prebuilt = AnsConfiguration.builder()
+            .environment(Environment.PROD)
+            .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
+            .baseUrl("https://custom.example.com")
+            .build();
+
+        DiscoveryClient client = DiscoveryClient.builder()
+            .environment(Environment.OTE)
+            .configuration(prebuilt)
+            .build();
+
+        assertThat(client.getConfiguration()).isSameAs(prebuilt);
+        assertThat(client.getConfiguration().getBaseUrl()).isEqualTo("https://custom.example.com");
     }
 
     // ==================== Resolution Success Tests ====================
