@@ -8,7 +8,7 @@ plugins {
 
 allprojects {
     group = "com.godaddy.ans"
-    version = "0.1.5" // x-release-please-version
+    version = "0.1.6" // x-release-please-version
 }
 
 // Modules to publish (excludes examples)

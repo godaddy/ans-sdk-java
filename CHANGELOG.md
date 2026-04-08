@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.6](https://github.com/godaddy/ans-sdk-java/compare/v0.1.5...v0.1.6) (2026-04-08)
+
+
+### Features
+
+* require explicit environment and add Spring Boot starter module ([#36](https://github.com/godaddy/ans-sdk-java/issues/36)) ([7290242](https://github.com/godaddy/ans-sdk-java/commit/729024285a7331c11567b56de290383bce7c6f46))
+
 ## [0.1.5](https://github.com/godaddy/ans-sdk-java/compare/v0.1.4...v0.1.5) (2026-03-06)
 
 
