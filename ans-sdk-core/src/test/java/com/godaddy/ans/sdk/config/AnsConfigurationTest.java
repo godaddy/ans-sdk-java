@@ -115,20 +115,20 @@ class AnsConfigurationTest {
     }
 
     @Test
-    @DisplayName("Should use default OTE environment when not specified")
-    void shouldUseDefaultOteEnvironment() {
-        AnsConfiguration config = AnsConfiguration.builder()
+    @DisplayName("Should throw when environment is not set")
+    void shouldThrowWhenEnvironmentNotSet() {
+        assertThatThrownBy(() -> AnsConfiguration.builder()
             .credentialsProvider(testProvider)
-            .build();
-
-        assertThat(config.getEnvironment()).isEqualTo(Environment.OTE);
-        assertThat(config.getBaseUrl()).isEqualTo("https://api.ote-godaddy.com");
+            .build())
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("Environment is required");
     }
 
     @Test
-    @DisplayName("Should allow custom base URL with default environment")
-    void shouldAllowCustomBaseUrlWithDefaultEnvironment() {
+    @DisplayName("Should allow custom base URL with explicit environment")
+    void shouldAllowCustomBaseUrlWithExplicitEnvironment() {
         AnsConfiguration config = AnsConfiguration.builder()
+            .environment(Environment.OTE)
             .baseUrl("http://custom-url.com")
             .credentialsProvider(testProvider)
             .build();

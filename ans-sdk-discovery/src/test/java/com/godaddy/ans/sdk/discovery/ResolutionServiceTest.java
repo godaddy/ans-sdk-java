@@ -32,6 +32,7 @@ class ResolutionServiceTest {
         when(mockProvider.resolveCredentials()).thenReturn(mockCredentials);
 
         AnsConfiguration config = AnsConfiguration.builder()
+            .environment(com.godaddy.ans.sdk.config.Environment.OTE)
             .credentialsProvider(mockProvider)
             .baseUrl("https://api.example.com")
             .build();
@@ -137,6 +138,43 @@ class ResolutionServiceTest {
         assertThat(thrown.getCause())
             .isInstanceOf(AnsServerException.class)
             .hasMessageContaining("Invalid agent-details link");
+    }
+
+    // ==================== Edge Case Tests ====================
+
+    @Test
+    @DisplayName("Should throw when response has no links field")
+    void shouldThrowWhenResponseHasNoLinksField() {
+        String responseBody = """
+            {
+                "ansName": "ans://v1.0.0.example.com"
+            }
+            """;
+
+        Throwable thrown = catchThrowable(() -> invokeExtractAgentDetailsLink(responseBody));
+        assertThat(thrown).isInstanceOf(InvocationTargetException.class);
+        assertThat(thrown.getCause())
+            .isInstanceOf(AnsServerException.class)
+            .hasMessageContaining("missing agent-details link");
+    }
+
+    @Test
+    @DisplayName("Should throw when links contain no matching rel")
+    void shouldThrowWhenLinksContainNoMatchingRel() {
+        String responseBody = """
+            {
+                "links": [
+                    {"rel": "self", "href": "/v1/agents/abc123"},
+                    {"href": "/v1/agents/def456"}
+                ]
+            }
+            """;
+
+        Throwable thrown = catchThrowable(() -> invokeExtractAgentDetailsLink(responseBody));
+        assertThat(thrown).isInstanceOf(InvocationTargetException.class);
+        assertThat(thrown.getCause())
+            .isInstanceOf(AnsServerException.class)
+            .hasMessageContaining("missing agent-details link");
     }
 
     // ==================== Helper Methods ====================

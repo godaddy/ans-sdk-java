@@ -136,8 +136,23 @@ public final class DiscoveryClient {
     public static final class Builder {
 
         private final AnsConfiguration.Builder configBuilder = AnsConfiguration.builder();
+        private AnsConfiguration prebuiltConfiguration;
 
         private Builder() {
+        }
+
+        /**
+         * Uses a pre-built configuration directly.
+         *
+         * <p>When set, this configuration is used as-is and any values set via
+         * other builder methods are ignored.</p>
+         *
+         * @param configuration the pre-built configuration
+         * @return this builder
+         */
+        public Builder configuration(AnsConfiguration configuration) {
+            this.prebuiltConfiguration = configuration;
+            return this;
         }
 
         /**
@@ -212,7 +227,10 @@ public final class DiscoveryClient {
          * @return a new DiscoveryClient instance
          */
         public DiscoveryClient build() {
-            return new DiscoveryClient(configBuilder.build());
+            AnsConfiguration config = (prebuiltConfiguration != null)
+                ? prebuiltConfiguration
+                : configBuilder.build();
+            return new DiscoveryClient(config);
         }
     }
 }

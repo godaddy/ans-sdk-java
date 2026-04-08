@@ -19,7 +19,8 @@ val publishableModules = setOf(
     "ans-sdk-registration",
     "ans-sdk-discovery",
     "ans-sdk-agent-client",
-    "ans-sdk-transparency"
+    "ans-sdk-transparency",
+    "ans-sdk-spring-boot-starter"
 )
 
 subprojects {

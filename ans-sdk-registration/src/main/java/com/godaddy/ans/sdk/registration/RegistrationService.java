@@ -1,6 +1,5 @@
 package com.godaddy.ans.sdk.registration;
 
-import com.godaddy.ans.sdk.config.AnsConfiguration;
 import com.godaddy.ans.sdk.exception.AnsServerException;
 import com.godaddy.ans.sdk.model.generated.AgentDetails;
 import com.godaddy.ans.sdk.model.generated.AgentRegistrationRequest;
@@ -20,10 +19,9 @@ class RegistrationService {
 
     private final AnsApiClient httpClient;
 
-    RegistrationService(AnsConfiguration configuration) {
-        this.httpClient = new AnsApiClient(configuration);
+    RegistrationService(final AnsApiClient ansApiClient) {
+        this.httpClient = ansApiClient;
     }
-
     /**
      * Registers a new agent and returns full agent details.
      *

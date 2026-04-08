@@ -4,6 +4,7 @@ import com.github.tomakehurst.wiremock.junit5.WireMockRuntimeInfo;
 import com.github.tomakehurst.wiremock.junit5.WireMockTest;
 import com.godaddy.ans.sdk.auth.ApiKeyCredentialsProvider;
 import com.godaddy.ans.sdk.config.AnsConfiguration;
+import com.godaddy.ans.sdk.config.Environment;
 import com.godaddy.ans.sdk.exception.AnsAuthenticationException;
 import com.godaddy.ans.sdk.exception.AnsNotFoundException;
 import com.godaddy.ans.sdk.exception.AnsServerException;
@@ -36,6 +37,7 @@ class CertificateServiceTest {
 
     private CertificateService createCertificateService(WireMockRuntimeInfo wmRuntimeInfo) {
         AnsConfiguration config = AnsConfiguration.builder()
+            .environment(Environment.OTE)
             .baseUrl(wmRuntimeInfo.getHttpBaseUrl())
             .credentialsProvider(new ApiKeyCredentialsProvider(API_KEY, API_SECRET))
             .build();

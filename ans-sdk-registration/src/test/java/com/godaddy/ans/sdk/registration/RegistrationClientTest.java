@@ -5,7 +5,9 @@ import com.github.tomakehurst.wiremock.junit5.WireMockTest;
 import com.godaddy.ans.sdk.auth.JwtCredentialsProvider;
 import com.godaddy.ans.sdk.config.Environment;
 import com.godaddy.ans.sdk.exception.AnsAuthenticationException;
+import com.godaddy.ans.sdk.exception.AnsConflictException;
 import com.godaddy.ans.sdk.exception.AnsNotFoundException;
+import com.godaddy.ans.sdk.exception.AnsServerException;
 import com.godaddy.ans.sdk.exception.AnsValidationException;
 import com.godaddy.ans.sdk.model.generated.AgentDetails;
 import com.godaddy.ans.sdk.model.generated.AgentEndpoint;
@@ -63,6 +65,7 @@ class RegistrationClientTest {
         String baseUrl = wmRuntimeInfo.getHttpBaseUrl();
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -140,6 +143,7 @@ class RegistrationClientTest {
                 .withBody(agentDetailsResponse())));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -183,6 +187,7 @@ class RegistrationClientTest {
                     + "\"message\":\"Invalid version format\"}")));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -216,6 +221,7 @@ class RegistrationClientTest {
                 .withBody(agentStatusResponse(AgentLifecycleStatus.PENDING_DNS))));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -238,6 +244,7 @@ class RegistrationClientTest {
                 .withBody("{\"status\":\"error\",\"code\":\"NOT_FOUND\",\"message\":\"Agent not found\"}")));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -261,6 +268,7 @@ class RegistrationClientTest {
                 .withBody(agentStatusResponse(AgentLifecycleStatus.ACTIVE))));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -283,6 +291,7 @@ class RegistrationClientTest {
                 .withBody("{\"status\":\"error\",\"code\":\"UNAUTHORIZED\",\"message\":\"Invalid token\"}")));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -306,6 +315,7 @@ class RegistrationClientTest {
                 .withBody(revocationResponse())));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -340,6 +350,7 @@ class RegistrationClientTest {
                 .withBody(revocationResponse())));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -366,6 +377,7 @@ class RegistrationClientTest {
                 .withBody("{\"status\":\"error\",\"code\":\"NOT_FOUND\",\"message\":\"Agent not found\"}")));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -389,6 +401,7 @@ class RegistrationClientTest {
                     + "\"message\":\"Agent is already in REVOKED state\"}")));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -412,6 +425,7 @@ class RegistrationClientTest {
                     + "\"message\":\"Cannot revoke agent in PENDING_VALIDATION state\"}")));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -436,6 +450,7 @@ class RegistrationClientTest {
                 .withBody(agentDetailsResponse())));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -459,6 +474,7 @@ class RegistrationClientTest {
                 .withBody("{\"status\":\"error\",\"code\":\"NOT_FOUND\",\"message\":\"Agent not found\"}")));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -488,6 +504,7 @@ class RegistrationClientTest {
                 .withBody(agentDetailsResponse())));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -520,6 +537,7 @@ class RegistrationClientTest {
                 .withBody(agentStatusResponse(AgentLifecycleStatus.PENDING_DNS))));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -542,6 +560,7 @@ class RegistrationClientTest {
                 .withBody(agentStatusResponse(AgentLifecycleStatus.ACTIVE))));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -564,6 +583,7 @@ class RegistrationClientTest {
                 .withBody(revocationResponse())));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -589,6 +609,7 @@ class RegistrationClientTest {
                 .withBody(revocationResponse())));
 
         RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
             .baseUrl(baseUrl)
             .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
             .build();
@@ -598,6 +619,126 @@ class RegistrationClientTest {
 
         assertThat(result).isNotNull();
         assertThat(result.getStatus()).isEqualTo(AgentLifecycleStatus.REVOKED);
+    }
+
+    // ==================== Error Handling Edge Cases ====================
+
+    @Test
+    @DisplayName("Should throw AnsConflictException on 409")
+    void shouldThrowConflictExceptionOn409(WireMockRuntimeInfo wmRuntimeInfo) {
+        String baseUrl = wmRuntimeInfo.getHttpBaseUrl();
+
+        stubFor(post(urlEqualTo("/v1/agents/register"))
+            .willReturn(aResponse()
+                .withStatus(409)
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"status\":\"error\",\"code\":\"CONFLICT\",\"message\":\"Agent already registered\"}")));
+
+        RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
+            .baseUrl(baseUrl)
+            .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
+            .build();
+
+        AgentRegistrationRequest request = new AgentRegistrationRequest()
+            .agentDisplayName("Test Agent")
+            .version("1.0.0")
+            .agentHost("test-agent.example.com")
+            .addEndpointsItem(new AgentEndpoint()
+                .protocol(AgentEndpoint.ProtocolEnum.A2_A)
+                .agentUrl(URI.create("https://test-agent.example.com/a2a")))
+            .identityCsrPEM("test-csr")
+            .serverCsrPEM("test-csr");
+
+        assertThatThrownBy(() -> client.registerAgent(request))
+            .isInstanceOf(AnsConflictException.class)
+            .hasMessageContaining("Conflict");
+    }
+
+    @Test
+    @DisplayName("Should throw AnsServerException on unexpected status code")
+    void shouldThrowServerExceptionOnUnexpectedStatusCode(WireMockRuntimeInfo wmRuntimeInfo) {
+        String baseUrl = wmRuntimeInfo.getHttpBaseUrl();
+
+        stubFor(get(urlEqualTo("/v1/agents/" + TEST_AGENT_ID))
+            .willReturn(aResponse()
+                .withStatus(418)
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"status\":\"error\",\"message\":\"I'm a teapot\"}")));
+
+        RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
+            .baseUrl(baseUrl)
+            .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
+            .build();
+
+        assertThatThrownBy(() -> client.getAgent(TEST_AGENT_ID))
+            .isInstanceOf(AnsServerException.class)
+            .hasMessageContaining("Unexpected error (418)");
+    }
+
+    @Test
+    @DisplayName("Should throw AnsServerException when registration response has no self link")
+    void shouldThrowWhenRegistrationMissingSelfLink(WireMockRuntimeInfo wmRuntimeInfo) {
+        String baseUrl = wmRuntimeInfo.getHttpBaseUrl();
+
+        stubFor(post(urlEqualTo("/v1/agents/register"))
+            .willReturn(aResponse()
+                .withStatus(202)
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"status\":\"PENDING_VALIDATION\",\"links\":[]}")));
+
+        RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
+            .baseUrl(baseUrl)
+            .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
+            .build();
+
+        AgentRegistrationRequest request = new AgentRegistrationRequest()
+            .agentDisplayName("Test Agent")
+            .version("1.0.0")
+            .agentHost("test-agent.example.com")
+            .addEndpointsItem(new AgentEndpoint()
+                .protocol(AgentEndpoint.ProtocolEnum.A2_A)
+                .agentUrl(URI.create("https://test-agent.example.com/a2a")))
+            .identityCsrPEM("test-csr")
+            .serverCsrPEM("test-csr");
+
+        assertThatThrownBy(() -> client.registerAgent(request))
+            .isInstanceOf(AnsServerException.class)
+            .hasMessageContaining("missing 'self' link");
+    }
+
+    @Test
+    @DisplayName("Should throw AnsServerException when registration response has null links")
+    void shouldThrowWhenRegistrationHasNullLinks(WireMockRuntimeInfo wmRuntimeInfo) {
+        String baseUrl = wmRuntimeInfo.getHttpBaseUrl();
+
+        stubFor(post(urlEqualTo("/v1/agents/register"))
+            .willReturn(aResponse()
+                .withStatus(202)
+                .withHeader("Content-Type", "application/json")
+                .withBody("{\"status\":\"PENDING_VALIDATION\"}")));
+
+        RegistrationClient client = RegistrationClient.builder()
+            .environment(Environment.OTE)
+            .baseUrl(baseUrl)
+            .credentialsProvider(new JwtCredentialsProvider(TEST_JWT_TOKEN))
+            .build();
+
+        AgentRegistrationRequest request = new AgentRegistrationRequest()
+            .agentDisplayName("Test Agent")
+            .version("1.0.0")
+            .agentHost("test-agent.example.com")
+            .addEndpointsItem(new AgentEndpoint()
+                .protocol(AgentEndpoint.ProtocolEnum.A2_A)
+                .agentUrl(URI.create("https://test-agent.example.com/a2a")))
+            .identityCsrPEM("test-csr")
+            .serverCsrPEM("test-csr");
+
+        assertThatThrownBy(() -> client.registerAgent(request))
+            .isInstanceOf(AnsServerException.class)
+            .hasMessageContaining("missing 'self' link");
     }
 
     // ==================== Helper Methods ====================

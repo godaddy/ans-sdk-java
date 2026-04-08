@@ -2,6 +2,7 @@ package com.godaddy.ans.sdk.http;
 
 import com.godaddy.ans.sdk.auth.JwtCredentialsProvider;
 import com.godaddy.ans.sdk.config.AnsConfiguration;
+import com.godaddy.ans.sdk.config.Environment;
 import org.junit.jupiter.api.Test;
 
 import java.net.http.HttpClient;
@@ -17,6 +18,7 @@ class HttpClientFactoryTest {
     @Test
     void createWithConfigurationShouldReturnConfiguredClient() {
         AnsConfiguration config = AnsConfiguration.builder()
+            .environment(Environment.OTE)
             .credentialsProvider(new JwtCredentialsProvider("test-token"))
             .connectTimeout(Duration.ofSeconds(30))
             .build();
@@ -40,6 +42,7 @@ class HttpClientFactoryTest {
     @Test
     void createShouldConfigureRedirectPolicy() {
         AnsConfiguration config = AnsConfiguration.builder()
+            .environment(Environment.OTE)
             .credentialsProvider(new JwtCredentialsProvider("test-token"))
             .build();
 
