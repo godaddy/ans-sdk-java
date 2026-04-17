@@ -1,5 +1,7 @@
 package com.godaddy.ans.sdk.agent.verification;
 
+import com.godaddy.ans.sdk.transparency.scitt.ScittPreVerifyResult;
+
 import java.time.Instant;
 import java.util.List;
 
@@ -10,6 +12,7 @@ import java.util.List;
  * <ul>
  *   <li><b>DANE</b>: Look up TLSA records and extract expected certificate data</li>
  *   <li><b>Badge</b>: Query transparency log for registered certificate fingerprints</li>
+ *   <li><b>SCITT</b>: Extract and verify receipts/status tokens from HTTP headers</li>
  * </ul>
  *
  * <p>After the TLS handshake completes, the actual server certificate is compared
@@ -27,6 +30,7 @@ import java.util.List;
  * @param badgeFingerprints expected fingerprints from transparency log (empty if not registered)
  * @param badgePreVerifyFailed true if badge pre-verification failed (e.g., revoked/expired)
  * @param badgeFailureReason the reason for badge pre-verification failure (null if not failed)
+ * @param scittPreVerifyResult the SCITT pre-verification result (null if not performed)
  * @param timestamp when the pre-verification was performed
  */
 public record PreVerificationResult(
@@ -38,6 +42,7 @@ public record PreVerificationResult(
     List<String> badgeFingerprints,
     boolean badgePreVerifyFailed,
     String badgeFailureReason,
+    ScittPreVerifyResult scittPreVerifyResult,
     Instant timestamp
 ) {
 
@@ -66,7 +71,8 @@ public record PreVerificationResult(
      * @return true if DANE expectations are available
      */
     public boolean hasDaneExpectation() {
-        return daneExpectations != null && !daneExpectations.isEmpty();
+        // Note: compact constructor guarantees daneExpectations is never null
+        return !daneExpectations.isEmpty();
     }
 
     /**
@@ -75,7 +81,49 @@ public record PreVerificationResult(
      * @return true if badge fingerprints are available from transparency log
      */
     public boolean hasBadgeExpectation() {
-        return badgeFingerprints != null && !badgeFingerprints.isEmpty();
+        // Note: compact constructor guarantees badgeFingerprints is never null
+        return !badgeFingerprints.isEmpty();
+    }
+
+    /**
+     * Returns true if SCITT verification should be performed.
+     *
+     * @return true if SCITT artifacts are available
+     */
+    public boolean hasScittExpectation() {
+        return scittPreVerifyResult != null && scittPreVerifyResult.isPresent();
+    }
+
+    /**
+     * Returns true if SCITT pre-verification was successful.
+     *
+     * @return true if SCITT expectation is verified
+     */
+    public boolean scittPreVerifySucceeded() {
+        return scittPreVerifyResult != null
+            && scittPreVerifyResult.isPresent()
+            && scittPreVerifyResult.expectation().isVerified();
+    }
+
+    /**
+     * Returns a new PreVerificationResult with the SCITT result replaced.
+     *
+     * @param scittResult the new SCITT pre-verification result
+     * @return a new PreVerificationResult with the updated SCITT result
+     */
+    public PreVerificationResult withScittResult(ScittPreVerifyResult scittResult) {
+        return new PreVerificationResult(
+            this.hostname,
+            this.port,
+            this.daneExpectations,
+            this.daneDnsError,
+            this.daneDnsErrorMessage,
+            this.badgeFingerprints,
+            this.badgePreVerifyFailed,
+            this.badgeFailureReason,
+            scittResult,
+            this.timestamp
+        );
     }
 
     /**
@@ -90,6 +138,7 @@ public record PreVerificationResult(
         private List<String> badgeFingerprints = List.of();
         private boolean badgePreVerifyFailed;
         private String badgeFailureReason;
+        private ScittPreVerifyResult scittPreVerifyResult;
 
         private Builder(String hostname, int port) {
             this.hostname = hostname;
@@ -97,18 +146,10 @@ public record PreVerificationResult(
         }
 
         /**
-         * Sets the expected DANE expectations from TLSA records.
-         *
-         * @param expectations the TLSA expectations
-         * @return this builder
-         */
-        public Builder daneExpectations(List<DaneTlsaVerifier.TlsaExpectation> expectations) {
-            this.daneExpectations = expectations != null ? expectations : List.of();
-            return this;
-        }
-
-        /**
          * Sets the DANE pre-verify result, extracting expectations and DNS error status.
+         *
+         * <p><b>This is the preferred method for setting DANE state.</b> It atomically sets
+         * all DANE-related fields from a single result object, ensuring consistency.</p>
          *
          * @param result the DANE pre-verify result
          * @return this builder
@@ -123,7 +164,33 @@ public record PreVerificationResult(
         }
 
         /**
+         * Sets the expected DANE expectations from TLSA records.
+         *
+         * <p><b>Note:</b> Prefer {@link #danePreVerifyResult(DaneVerifier.PreVerifyResult)} which
+         * sets all DANE state atomically. This method exists primarily for testing scenarios
+         * where constructing a full {@code PreVerifyResult} is inconvenient.</p>
+         *
+         * <p><b>Warning:</b> Calling this after {@link #danePreVerifyResult} will overwrite
+         * the expectations but leave DNS error flags unchanged, potentially creating
+         * inconsistent state.</p>
+         *
+         * @param expectations the TLSA expectations
+         * @return this builder
+         */
+        public Builder daneExpectations(List<DaneTlsaVerifier.TlsaExpectation> expectations) {
+            this.daneExpectations = expectations != null ? expectations : List.of();
+            return this;
+        }
+
+        /**
          * Marks DANE pre-verification as failed due to DNS error.
+         *
+         * <p><b>Note:</b> Prefer {@link #danePreVerifyResult(DaneVerifier.PreVerifyResult)} which
+         * sets all DANE state atomically. This method exists primarily for testing scenarios.</p>
+         *
+         * <p><b>Warning:</b> Calling this after {@link #danePreVerifyResult} will overwrite
+         * the DNS error state but leave expectations unchanged, potentially creating
+         * inconsistent state.</p>
          *
          * @param errorMessage the DNS error message
          * @return this builder
@@ -162,6 +229,17 @@ public record PreVerificationResult(
         }
 
         /**
+         * Sets the SCITT pre-verification result.
+         *
+         * @param result the SCITT pre-verification result
+         * @return this builder
+         */
+        public Builder scittPreVerifyResult(ScittPreVerifyResult result) {
+            this.scittPreVerifyResult = result;
+            return this;
+        }
+
+        /**
          * Builds the PreVerificationResult.
          *
          * @return the built result
@@ -176,6 +254,7 @@ public record PreVerificationResult(
                 badgeFingerprints,
                 badgePreVerifyFailed,
                 badgeFailureReason,
+                scittPreVerifyResult,
                 Instant.now()
             );
         }
@@ -184,7 +263,7 @@ public record PreVerificationResult(
     @Override
     public String toString() {
         return String.format("PreVerificationResult{hostname='%s', port=%d, " +
-            "hasDane=%s, hasBadge=%s}",
-            hostname, port, hasDaneExpectation(), hasBadgeExpectation());
+            "hasDane=%s, hasBadge=%s, hasScitt=%s}",
+            hostname, port, hasDaneExpectation(), hasBadgeExpectation(), hasScittExpectation());
     }
 }

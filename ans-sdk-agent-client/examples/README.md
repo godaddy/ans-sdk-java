@@ -47,7 +47,8 @@ All examples support different ANS verification policies:
 | `DANE_REQUIRED` | Requires DANE/TLSA verification |
 | `BADGE_REQUIRED` | Requires transparency log verification |
 | `DANE_AND_BADGE` | Requires both DANE and Badge |
-| `FULL` | DANE + Badge (maximum security) |
+| `SCITT_REQUIRED` | Requires SCITT header verification (recommended) |
+| `SCITT_ENHANCED` | SCITT required with badge fallback if no headers |
 
 ## Integration Patterns
 

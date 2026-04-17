@@ -321,10 +321,10 @@ public final class ConnectOptions {
         }
 
         /**
-         * Sets a custom transparency client.
+         * Sets the transparency client (required when badge verification is enabled).
          *
-         * <p>If not set, a default client will be created when identity
-         * verification is enabled.</p>
+         * <p>Use {@link TransparencyClient#builder()} with an explicit
+         * {@code baseUrl} to create one.</p>
          *
          * @param client the transparency client
          * @return this builder

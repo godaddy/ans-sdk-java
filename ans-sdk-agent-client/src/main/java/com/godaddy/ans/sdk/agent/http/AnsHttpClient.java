@@ -75,9 +75,18 @@ public class AnsHttpClient {
     private final ConnectionVerifier verifier;
     private final VerificationPolicy policy;
     private final Duration preVerifyTimeout;
+    private final CapturedCertificateProvider certProvider;
 
     // Cache for pre-verification results
     private final Map<String, CachedPreVerification> preVerifyCache = new ConcurrentHashMap<>();
+
+    /**
+     * Returns whether a certificate provider is configured.
+     * Package-private for test access.
+     */
+    boolean hasCertProvider() {
+        return certProvider != null;
+    }
 
     private AnsHttpClient(Builder builder) {
         this.delegate = Objects.requireNonNull(builder.delegate, "Delegate HttpClient cannot be null");
@@ -86,6 +95,7 @@ public class AnsHttpClient {
         this.preVerifyTimeout = builder.preVerifyTimeout != null
             ? builder.preVerifyTimeout
             : DEFAULT_PRE_VERIFY_TIMEOUT;
+        this.certProvider = builder.certProvider;
     }
 
     /**
@@ -167,10 +177,41 @@ public class AnsHttpClient {
 
         LOGGER.debug("Sending request to {}:{} with verification", hostname, port);
 
-        // 1. Pre-verify (uses cache)
         PreVerificationResult preResult = getOrPreVerify(hostname, port);
+        checkBadgePreVerification(preResult, hostname);
 
-        // Check if badge pre-verification failed and badge is REQUIRED
+        HttpResponse<T> response = delegate.send(request, responseBodyHandler);
+        return performPostVerification(response, hostname, port, preResult);
+    }
+
+    /**
+     * Sends an HTTP request asynchronously with verification.
+     *
+     * @param request the HTTP request
+     * @param responseBodyHandler the response body handler
+     * @param <T> the response body type
+     * @return a CompletableFuture for the HTTP response
+     */
+    public <T> CompletableFuture<HttpResponse<T>> sendAsync(HttpRequest request,
+                                                            HttpResponse.BodyHandler<T> responseBodyHandler) {
+        URI uri = request.uri();
+        String hostname = uri.getHost();
+        int port = uri.getPort() > 0 ? uri.getPort() : 443;
+
+        return preVerifyAsync(hostname, port)
+            .thenCompose(preResult -> {
+                checkBadgePreVerification(preResult, hostname);
+                return delegate.sendAsync(request, responseBodyHandler)
+                    .thenApply(response -> performPostVerification(response, hostname, port, preResult));
+            });
+    }
+
+    /**
+     * Checks if badge pre-verification failed when badge is REQUIRED.
+     *
+     * @throws VerificationException if badge pre-verification failed and badge is REQUIRED
+     */
+    private void checkBadgePreVerification(PreVerificationResult preResult, String hostname) {
         if (preResult.badgePreVerifyFailed() && policy.badgeMode() == VerificationMode.REQUIRED) {
             LOGGER.error("Badge pre-verification failed for {} and is REQUIRED: {}",
                 hostname, preResult.badgeFailureReason());
@@ -182,16 +223,29 @@ public class AnsHttpClient {
                         : "Badge pre-verification failed"),
                 hostname);
         }
+    }
 
-        // 2. Send request (TLS handshake with PKI only)
-        HttpResponse<T> response = delegate.send(request, responseBodyHandler);
-
-        // 3. Get captured certificate by hostname
-        X509Certificate[] capturedCerts = CertificateCapturingTrustManager.getCapturedCertificates(hostname);
+    /**
+     * Performs post-TLS-handshake verification on the captured server certificate.
+     *
+     * <p>Captures the server certificate, verifies it against expectations, and handles
+     * fingerprint mismatch retries with fresh data from the transparency log.</p>
+     *
+     * @param response the HTTP response from the delegate
+     * @param hostname the target hostname
+     * @param port the target port
+     * @param preResult the pre-verification result with expectations
+     * @param <T> the response body type
+     * @return the response if verification passes
+     * @throws VerificationException if post-handshake verification fails
+     */
+    private <T> HttpResponse<T> performPostVerification(HttpResponse<T> response,
+            String hostname, int port, PreVerificationResult preResult) {
+        X509Certificate[] capturedCerts = certProvider != null
+            ? certProvider.getCapturedCertificates(hostname) : null;
         try {
             if (capturedCerts == null || capturedCerts.length == 0) {
                 LOGGER.warn("No certificates captured during TLS handshake for {}", hostname);
-                // Can't verify without certificate - decide based on policy
                 if (policy.hasAnyVerification()) {
                     throw new VerificationException(
                         VerificationResult.error(
@@ -203,13 +257,10 @@ public class AnsHttpClient {
             }
 
             X509Certificate serverCert = capturedCerts[0];
-
-            // 4. Post-verify
             List<VerificationResult> results = verifier.postVerify(hostname, serverCert, preResult);
             VerificationResult combined = verifier.combine(results, policy);
 
             if (combined.shouldFail()) {
-                // 5. On fingerprint mismatch, retry with fresh data (cache may be stale)
                 if (isFingerprintMismatch(combined)) {
                     LOGGER.info("Fingerprint mismatch for {} - retrying with fresh data", hostname);
                     VerificationResult retryResult = retryWithFreshData(hostname, port, serverCert);
@@ -229,79 +280,10 @@ public class AnsHttpClient {
             return response;
 
         } finally {
-            // Always clear captured certificates to prevent memory leaks
-            CertificateCapturingTrustManager.clearCapturedCertificates(hostname);
+            if (certProvider != null) {
+                certProvider.clearCapturedCertificates(hostname);
+            }
         }
-    }
-
-    /**
-     * Sends an HTTP request asynchronously with verification.
-     *
-     * @param request the HTTP request
-     * @param responseBodyHandler the response body handler
-     * @param <T> the response body type
-     * @return a CompletableFuture for the HTTP response
-     */
-    public <T> CompletableFuture<HttpResponse<T>> sendAsync(HttpRequest request,
-                                                            HttpResponse.BodyHandler<T> responseBodyHandler) {
-        URI uri = request.uri();
-        String hostname = uri.getHost();
-        int port = uri.getPort() > 0 ? uri.getPort() : 443;
-
-        // Pre-verify async, then send
-        return preVerifyAsync(hostname, port)
-            .thenCompose(preResult -> {
-                // Check if badge pre-verification failed and badge is REQUIRED
-                if (preResult.badgePreVerifyFailed() && policy.badgeMode() == VerificationMode.REQUIRED) {
-                    VerificationResult failResult = VerificationResult.error(
-                        VerificationResult.VerificationType.BADGE,
-                        preResult.badgeFailureReason() != null
-                            ? preResult.badgeFailureReason()
-                            : "Badge pre-verification failed");
-                    return CompletableFuture.failedFuture(new VerificationException(failResult, hostname));
-                }
-
-                return delegate.sendAsync(request, responseBodyHandler)
-                    .thenApply(response -> {
-                        // Post-verify using hostname-keyed certificate capture
-                        X509Certificate[] capturedCerts =
-                                CertificateCapturingTrustManager.getCapturedCertificates(hostname);
-                        try {
-                            if (capturedCerts == null || capturedCerts.length == 0) {
-                                if (policy.hasAnyVerification()) {
-                                    throw new VerificationException(
-                                        VerificationResult.error(
-                                            VerificationResult.VerificationType.DANE,
-                                            "No certificates captured during TLS handshake"),
-                                        hostname);
-                                }
-                                return response;
-                            }
-
-                            X509Certificate serverCert = capturedCerts[0];
-                            List<VerificationResult> results = verifier.postVerify(
-                                hostname, serverCert, preResult);
-                            VerificationResult combined = verifier.combine(results, policy);
-
-                            if (combined.shouldFail()) {
-                                // On fingerprint mismatch, retry with fresh data (cache may be stale)
-                                if (isFingerprintMismatch(combined)) {
-                                    LOGGER.info("Fingerprint mismatch for {} - retrying with fresh data", hostname);
-                                    VerificationResult retryResult = retryWithFreshData(hostname, port, serverCert);
-                                    if (retryResult.shouldFail()) {
-                                        throw new VerificationException(retryResult, hostname);
-                                    }
-                                    return response;
-                                }
-                                throw new VerificationException(combined, hostname);
-                            }
-
-                            return response;
-                        } finally {
-                            CertificateCapturingTrustManager.clearCapturedCertificates(hostname);
-                        }
-                    });
-            });
     }
 
     /**
@@ -439,6 +421,7 @@ public class AnsHttpClient {
         private ConnectionVerifier verifier;
         private VerificationPolicy policy;
         private Duration preVerifyTimeout;
+        private CapturedCertificateProvider certProvider;
 
         private Builder() {
         }
@@ -487,6 +470,17 @@ public class AnsHttpClient {
          */
         public Builder preVerifyTimeout(Duration timeout) {
             this.preVerifyTimeout = timeout;
+            return this;
+        }
+
+        /**
+         * Sets the captured certificate provider for post-handshake verification.
+         *
+         * @param certProvider the provider for captured server certificates
+         * @return this builder
+         */
+        public Builder certProvider(CapturedCertificateProvider certProvider) {
+            this.certProvider = certProvider;
             return this;
         }
 

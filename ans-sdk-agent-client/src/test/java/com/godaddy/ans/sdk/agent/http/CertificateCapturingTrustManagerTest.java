@@ -1,10 +1,10 @@
 package com.godaddy.ans.sdk.agent.http;
 
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import javax.net.ssl.SSLEngine;
+import javax.net.ssl.SSLSession;
 import javax.net.ssl.X509ExtendedTrustManager;
 import javax.net.ssl.X509TrustManager;
 import java.net.InetSocketAddress;
@@ -13,6 +13,7 @@ import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -40,14 +41,6 @@ class CertificateCapturingTrustManagerTest {
         mockExtendedDelegate = mock(X509ExtendedTrustManager.class);
         mockCert = mock(X509Certificate.class);
         certChain = new X509Certificate[]{mockCert};
-
-        // Clear any previously captured certificates
-        CertificateCapturingTrustManager.clearCapturedCertificates();
-    }
-
-    @AfterEach
-    void tearDown() {
-        CertificateCapturingTrustManager.clearCapturedCertificates();
     }
 
     @Test
@@ -63,25 +56,40 @@ class CertificateCapturingTrustManagerTest {
     }
 
     @Test
-    void getCapturedCertificatesReturnsNullForUnknownHost() {
-        assertNull(CertificateCapturingTrustManager.getCapturedCertificates("unknown.host.com"));
+    void getInstanceCapturedCertificatesReturnsNullForUnknownHost() {
+        CertificateCapturingTrustManager tm = new CertificateCapturingTrustManager(mockDelegate);
+        assertNull(tm.getInstanceCapturedCertificates("unknown.host.com"));
     }
 
     @Test
-    void clearCapturedCertificatesRemovesCertificates() throws CertificateException {
+    void clearInstanceCapturedCertificatesRemovesCertificates() throws CertificateException {
         CertificateCapturingTrustManager tm = new CertificateCapturingTrustManager(mockExtendedDelegate);
         SSLEngine engine = mock(SSLEngine.class);
         when(engine.getPeerHost()).thenReturn("test.example.com");
 
         tm.checkServerTrusted(certChain, "RSA", engine);
 
-        assertNotNull(CertificateCapturingTrustManager.getCapturedCertificates("test.example.com"));
-        CertificateCapturingTrustManager.clearCapturedCertificates("test.example.com");
-        assertNull(CertificateCapturingTrustManager.getCapturedCertificates("test.example.com"));
+        assertNotNull(tm.getInstanceCapturedCertificates("test.example.com"));
+        // After get (which removes), clear should be a no-op
+        tm.clearInstanceCapturedCertificates("test.example.com");
+        assertNull(tm.getInstanceCapturedCertificates("test.example.com"));
     }
 
     @Test
-    void clearAllCapturedCertificates() throws CertificateException {
+    void clearInstanceCapturedCertificatesRemovesBeforeGet() throws CertificateException {
+        CertificateCapturingTrustManager tm = new CertificateCapturingTrustManager(mockExtendedDelegate);
+        SSLEngine engine = mock(SSLEngine.class);
+        when(engine.getPeerHost()).thenReturn("test.example.com");
+
+        tm.checkServerTrusted(certChain, "RSA", engine);
+
+        // Clear before get
+        tm.clearInstanceCapturedCertificates("test.example.com");
+        assertNull(tm.getInstanceCapturedCertificates("test.example.com"));
+    }
+
+    @Test
+    void clearAllInstanceCapturedCertificates() throws CertificateException {
         CertificateCapturingTrustManager tm = new CertificateCapturingTrustManager(mockExtendedDelegate);
         SSLEngine engine1 = mock(SSLEngine.class);
         when(engine1.getPeerHost()).thenReturn("host1.com");
@@ -91,13 +99,10 @@ class CertificateCapturingTrustManagerTest {
         tm.checkServerTrusted(certChain, "RSA", engine1);
         tm.checkServerTrusted(certChain, "RSA", engine2);
 
-        assertNotNull(CertificateCapturingTrustManager.getCapturedCertificates("host1.com"));
-        assertNotNull(CertificateCapturingTrustManager.getCapturedCertificates("host2.com"));
+        tm.clearInstanceCapturedCertificates();
 
-        CertificateCapturingTrustManager.clearCapturedCertificates();
-
-        assertNull(CertificateCapturingTrustManager.getCapturedCertificates("host1.com"));
-        assertNull(CertificateCapturingTrustManager.getCapturedCertificates("host2.com"));
+        assertNull(tm.getInstanceCapturedCertificates("host1.com"));
+        assertNull(tm.getInstanceCapturedCertificates("host2.com"));
     }
 
     @Test
@@ -109,7 +114,7 @@ class CertificateCapturingTrustManagerTest {
         tm.checkServerTrusted(certChain, "RSA", engine);
 
         verify(mockExtendedDelegate).checkServerTrusted(certChain, "RSA", engine);
-        X509Certificate[] captured = CertificateCapturingTrustManager.getCapturedCertificates("secure.example.com");
+        X509Certificate[] captured = tm.getInstanceCapturedCertificates("secure.example.com");
         assertNotNull(captured);
         assertEquals(1, captured.length);
     }
@@ -123,7 +128,7 @@ class CertificateCapturingTrustManagerTest {
         tm.checkServerTrusted(certChain, "RSA", socket);
 
         verify(mockExtendedDelegate).checkServerTrusted(certChain, "RSA", socket);
-        X509Certificate[] captured = CertificateCapturingTrustManager.getCapturedCertificates("socket.example.com");
+        X509Certificate[] captured = tm.getInstanceCapturedCertificates("socket.example.com");
         assertNotNull(captured);
     }
 
@@ -183,14 +188,28 @@ class CertificateCapturingTrustManagerTest {
     @Test
     void capturedCertificatesAreCloned() throws CertificateException {
         CertificateCapturingTrustManager tm = new CertificateCapturingTrustManager(mockExtendedDelegate);
-        SSLEngine engine = mock(SSLEngine.class);
-        when(engine.getPeerHost()).thenReturn("clone.test.com");
 
-        tm.checkServerTrusted(certChain, "RSA", engine);
+        // First handshake
+        SSLEngine engine1 = mock(SSLEngine.class);
+        SSLSession session1 = mock(SSLSession.class);
+        when(engine1.getPeerHost()).thenReturn("clone.test.com");
+        when(engine1.getSession()).thenReturn(session1);
+        when(session1.getId()).thenReturn(new byte[]{0x01});
+        tm.checkServerTrusted(certChain, "RSA", engine1);
 
-        X509Certificate[] captured1 = CertificateCapturingTrustManager.getCapturedCertificates("clone.test.com");
-        X509Certificate[] captured2 = CertificateCapturingTrustManager.getCapturedCertificates("clone.test.com");
+        // Second handshake (same host, different session)
+        SSLEngine engine2 = mock(SSLEngine.class);
+        SSLSession session2 = mock(SSLSession.class);
+        when(engine2.getPeerHost()).thenReturn("clone.test.com");
+        when(engine2.getSession()).thenReturn(session2);
+        when(session2.getId()).thenReturn(new byte[]{0x02});
+        tm.checkServerTrusted(certChain, "RSA", engine2);
 
+        X509Certificate[] captured1 = tm.getInstanceCapturedCertificates("clone.test.com");
+        X509Certificate[] captured2 = tm.getInstanceCapturedCertificates("clone.test.com");
+
+        assertNotNull(captured1);
+        assertNotNull(captured2);
         assertNotSame(captured1, captured2);
     }
 
@@ -243,31 +262,28 @@ class CertificateCapturingTrustManagerTest {
 
     @Test
     void checkServerTrustedWithEmptyCertChain() throws CertificateException {
-        // Test with empty cert chain
         CertificateCapturingTrustManager tm = new CertificateCapturingTrustManager(mockExtendedDelegate);
         SSLEngine engine = mock(SSLEngine.class);
         when(engine.getPeerHost()).thenReturn("empty.test.com");
 
         tm.checkServerTrusted(new X509Certificate[0], "RSA", engine);
 
-        assertNull(CertificateCapturingTrustManager.getCapturedCertificates("empty.test.com"));
+        assertNull(tm.getInstanceCapturedCertificates("empty.test.com"));
     }
 
     @Test
     void checkServerTrustedWithNullCertChain() throws CertificateException {
-        // Test with null cert chain
         CertificateCapturingTrustManager tm = new CertificateCapturingTrustManager(mockExtendedDelegate);
         SSLEngine engine = mock(SSLEngine.class);
         when(engine.getPeerHost()).thenReturn("null.test.com");
 
         tm.checkServerTrusted(null, "RSA", engine);
 
-        assertNull(CertificateCapturingTrustManager.getCapturedCertificates("null.test.com"));
+        assertNull(tm.getInstanceCapturedCertificates("null.test.com"));
     }
 
     @Test
     void checkClientTrustedWithSocketDelegatesToBasic() throws CertificateException {
-        // Test checkClientTrusted with socket when delegate is not extended
         CertificateCapturingTrustManager tm = new CertificateCapturingTrustManager(mockDelegate);
         Socket socket = mock(Socket.class);
 
@@ -279,7 +295,6 @@ class CertificateCapturingTrustManagerTest {
 
     @Test
     void checkClientTrustedWithEngineDelegatesToBasic() throws CertificateException {
-        // Test checkClientTrusted with engine when delegate is not extended
         CertificateCapturingTrustManager tm = new CertificateCapturingTrustManager(mockDelegate);
         SSLEngine engine = mock(SSLEngine.class);
 
@@ -291,7 +306,6 @@ class CertificateCapturingTrustManagerTest {
 
     @Test
     void checkServerTrustedWithEngineDelegatesToBasic() throws CertificateException {
-        // Test checkServerTrusted with engine when delegate is not extended
         CertificateCapturingTrustManager tm = new CertificateCapturingTrustManager(mockDelegate);
         SSLEngine engine = mock(SSLEngine.class);
         when(engine.getPeerHost()).thenReturn("basic-engine.test.com");
@@ -300,12 +314,8 @@ class CertificateCapturingTrustManagerTest {
 
         // Non-extended delegate should use basic method
         verify(mockDelegate).checkServerTrusted(certChain, "RSA");
-        X509Certificate[] captured = CertificateCapturingTrustManager.getCapturedCertificates("basic-engine.test.com");
+        X509Certificate[] captured = tm.getInstanceCapturedCertificates("basic-engine.test.com");
         assertNotNull(captured);
-    }
-
-    private void assertEquals(int expected, int actual) {
-        org.junit.jupiter.api.Assertions.assertEquals(expected, actual);
     }
 
     // ==================== Session ID-based Tests ====================
@@ -314,7 +324,7 @@ class CertificateCapturingTrustManagerTest {
     void getCapturedCertificatesWithSessionId() throws CertificateException {
         CertificateCapturingTrustManager tm = new CertificateCapturingTrustManager(mockExtendedDelegate);
         SSLEngine engine = mock(SSLEngine.class);
-        javax.net.ssl.SSLSession session = mock(javax.net.ssl.SSLSession.class);
+        SSLSession session = mock(SSLSession.class);
         when(engine.getPeerHost()).thenReturn("session.test.com");
         when(engine.getSession()).thenReturn(session);
         when(session.getId()).thenReturn(new byte[]{0x01, 0x02, 0x03, 0x04});
@@ -322,107 +332,26 @@ class CertificateCapturingTrustManagerTest {
         tm.checkServerTrusted(certChain, "RSA", engine);
 
         // Should be able to retrieve with hostname only (finds first match)
-        X509Certificate[] captured = CertificateCapturingTrustManager.getCapturedCertificates("session.test.com");
+        X509Certificate[] captured = tm.getInstanceCapturedCertificates("session.test.com");
         assertNotNull(captured);
     }
 
     @Test
-    void getCapturedCertificatesWithExplicitSessionId() throws CertificateException {
+    void clearCapturedCertificatesWithSessionIdClearsForHostname() throws CertificateException {
         CertificateCapturingTrustManager tm = new CertificateCapturingTrustManager(mockExtendedDelegate);
         SSLEngine engine = mock(SSLEngine.class);
-        javax.net.ssl.SSLSession session = mock(javax.net.ssl.SSLSession.class);
-        when(engine.getPeerHost()).thenReturn("explicit.test.com");
-        when(engine.getSession()).thenReturn(session);
-        when(session.getId()).thenReturn(new byte[]{0x0A, 0x0B, 0x0C, 0x0D});
-
-        tm.checkServerTrusted(certChain, "RSA", engine);
-
-        // Retrieve with explicit session ID
-        X509Certificate[] captured = CertificateCapturingTrustManager.getCapturedCertificates(
-            "explicit.test.com", "0a0b0c0d");
-        assertNotNull(captured);
-    }
-
-    @Test
-    void getCapturedCertificatesWithNullSessionIdFallsBackToHostname() throws CertificateException {
-        CertificateCapturingTrustManager tm = new CertificateCapturingTrustManager(mockExtendedDelegate);
-        SSLEngine engine = mock(SSLEngine.class);
-        when(engine.getPeerHost()).thenReturn("fallback.test.com");
-        when(engine.getSession()).thenReturn(null);
-
-        tm.checkServerTrusted(certChain, "RSA", engine);
-
-        // Should fall back to hostname-only retrieval
-        X509Certificate[] captured = CertificateCapturingTrustManager.getCapturedCertificates(
-            "fallback.test.com", null);
-        assertNotNull(captured);
-    }
-
-    @Test
-    void getCapturedCertificatesWithEmptySessionIdFallsBackToHostname() throws CertificateException {
-        CertificateCapturingTrustManager tm = new CertificateCapturingTrustManager(mockExtendedDelegate);
-        SSLEngine engine = mock(SSLEngine.class);
-        when(engine.getPeerHost()).thenReturn("empty.session.test.com");
-        when(engine.getSession()).thenReturn(null);
-
-        tm.checkServerTrusted(certChain, "RSA", engine);
-
-        // Should fall back to hostname-only retrieval
-        X509Certificate[] captured = CertificateCapturingTrustManager.getCapturedCertificates(
-            "empty.session.test.com", "");
-        assertNotNull(captured);
-    }
-
-    @Test
-    void clearCapturedCertificatesWithSessionId() throws CertificateException {
-        CertificateCapturingTrustManager tm = new CertificateCapturingTrustManager(mockExtendedDelegate);
-        SSLEngine engine = mock(SSLEngine.class);
-        javax.net.ssl.SSLSession session = mock(javax.net.ssl.SSLSession.class);
+        SSLSession session = mock(SSLSession.class);
         when(engine.getPeerHost()).thenReturn("clear.session.test.com");
         when(engine.getSession()).thenReturn(session);
         when(session.getId()).thenReturn(new byte[]{0x11, 0x22, 0x33, 0x44});
 
         tm.checkServerTrusted(certChain, "RSA", engine);
 
-        // Clear with specific session ID
-        CertificateCapturingTrustManager.clearCapturedCertificates("clear.session.test.com", "11223344");
+        // Clear by hostname (clears all session IDs)
+        tm.clearInstanceCapturedCertificates("clear.session.test.com");
 
         // Should be cleared
-        assertNull(CertificateCapturingTrustManager.getCapturedCertificates("clear.session.test.com"));
-    }
-
-    @Test
-    void clearCapturedCertificatesWithNullSessionIdClearsAllForHostname() throws CertificateException {
-        CertificateCapturingTrustManager tm = new CertificateCapturingTrustManager(mockExtendedDelegate);
-        SSLEngine engine = mock(SSLEngine.class);
-        javax.net.ssl.SSLSession session = mock(javax.net.ssl.SSLSession.class);
-        when(engine.getPeerHost()).thenReturn("clearnull.test.com");
-        when(engine.getSession()).thenReturn(session);
-        when(session.getId()).thenReturn(new byte[]{0x55, 0x66});
-
-        tm.checkServerTrusted(certChain, "RSA", engine);
-
-        // Clear with null session ID should clear all for hostname
-        CertificateCapturingTrustManager.clearCapturedCertificates("clearnull.test.com", null);
-
-        assertNull(CertificateCapturingTrustManager.getCapturedCertificates("clearnull.test.com"));
-    }
-
-    @Test
-    void clearCapturedCertificatesWithEmptySessionIdClearsAllForHostname() throws CertificateException {
-        CertificateCapturingTrustManager tm = new CertificateCapturingTrustManager(mockExtendedDelegate);
-        SSLEngine engine = mock(SSLEngine.class);
-        javax.net.ssl.SSLSession session = mock(javax.net.ssl.SSLSession.class);
-        when(engine.getPeerHost()).thenReturn("clearempty.test.com");
-        when(engine.getSession()).thenReturn(session);
-        when(session.getId()).thenReturn(new byte[]{0x77, (byte) 0x88});
-
-        tm.checkServerTrusted(certChain, "RSA", engine);
-
-        // Clear with empty session ID should clear all for hostname
-        CertificateCapturingTrustManager.clearCapturedCertificates("clearempty.test.com", "");
-
-        assertNull(CertificateCapturingTrustManager.getCapturedCertificates("clearempty.test.com"));
+        assertNull(tm.getInstanceCapturedCertificates("clear.session.test.com"));
     }
 
     @Test
@@ -435,7 +364,7 @@ class CertificateCapturingTrustManagerTest {
         // Should not throw - falls back to identity hash
         tm.checkServerTrusted(certChain, "RSA", engine);
 
-        X509Certificate[] captured = CertificateCapturingTrustManager.getCapturedCertificates("exception.test.com");
+        X509Certificate[] captured = tm.getInstanceCapturedCertificates("exception.test.com");
         assertNotNull(captured);
     }
 
@@ -443,14 +372,14 @@ class CertificateCapturingTrustManagerTest {
     void extractSessionIdHandlesEmptySessionId() throws CertificateException {
         CertificateCapturingTrustManager tm = new CertificateCapturingTrustManager(mockExtendedDelegate);
         SSLEngine engine = mock(SSLEngine.class);
-        javax.net.ssl.SSLSession session = mock(javax.net.ssl.SSLSession.class);
+        SSLSession session = mock(SSLSession.class);
         when(engine.getPeerHost()).thenReturn("emptysid.test.com");
         when(engine.getSession()).thenReturn(session);
         when(session.getId()).thenReturn(new byte[0]); // Empty session ID
 
         tm.checkServerTrusted(certChain, "RSA", engine);
 
-        X509Certificate[] captured = CertificateCapturingTrustManager.getCapturedCertificates("emptysid.test.com");
+        X509Certificate[] captured = tm.getInstanceCapturedCertificates("emptysid.test.com");
         assertNotNull(captured);
     }
 
@@ -458,14 +387,14 @@ class CertificateCapturingTrustManagerTest {
     void extractSessionIdHandlesNullSessionId() throws CertificateException {
         CertificateCapturingTrustManager tm = new CertificateCapturingTrustManager(mockExtendedDelegate);
         SSLEngine engine = mock(SSLEngine.class);
-        javax.net.ssl.SSLSession session = mock(javax.net.ssl.SSLSession.class);
+        SSLSession session = mock(SSLSession.class);
         when(engine.getPeerHost()).thenReturn("nullsid.test.com");
         when(engine.getSession()).thenReturn(session);
         when(session.getId()).thenReturn(null); // Null session ID
 
         tm.checkServerTrusted(certChain, "RSA", engine);
 
-        X509Certificate[] captured = CertificateCapturingTrustManager.getCapturedCertificates("nullsid.test.com");
+        X509Certificate[] captured = tm.getInstanceCapturedCertificates("nullsid.test.com");
         assertNotNull(captured);
     }
 
@@ -475,7 +404,7 @@ class CertificateCapturingTrustManagerTest {
 
         // First request with session ID 1
         SSLEngine engine1 = mock(SSLEngine.class);
-        javax.net.ssl.SSLSession session1 = mock(javax.net.ssl.SSLSession.class);
+        SSLSession session1 = mock(SSLSession.class);
         when(engine1.getPeerHost()).thenReturn("concurrent.test.com");
         when(engine1.getSession()).thenReturn(session1);
         when(session1.getId()).thenReturn(new byte[]{0x01});
@@ -485,7 +414,7 @@ class CertificateCapturingTrustManagerTest {
 
         // Second request with session ID 2 (same host)
         SSLEngine engine2 = mock(SSLEngine.class);
-        javax.net.ssl.SSLSession session2 = mock(javax.net.ssl.SSLSession.class);
+        SSLSession session2 = mock(SSLSession.class);
         when(engine2.getPeerHost()).thenReturn("concurrent.test.com");
         when(engine2.getSession()).thenReturn(session2);
         when(session2.getId()).thenReturn(new byte[]{0x02});
@@ -498,12 +427,33 @@ class CertificateCapturingTrustManagerTest {
         tm.checkServerTrusted(chain2, "RSA", engine2);
 
         // Each retrieval should get one certificate (removed on retrieval)
-        X509Certificate[] captured1 = CertificateCapturingTrustManager.getCapturedCertificates("concurrent.test.com");
-        X509Certificate[] captured2 = CertificateCapturingTrustManager.getCapturedCertificates("concurrent.test.com");
+        X509Certificate[] captured1 = tm.getInstanceCapturedCertificates("concurrent.test.com");
+        X509Certificate[] captured2 = tm.getInstanceCapturedCertificates("concurrent.test.com");
 
         assertNotNull(captured1);
         assertNotNull(captured2);
         // After two retrievals, should be empty
-        assertNull(CertificateCapturingTrustManager.getCapturedCertificates("concurrent.test.com"));
+        assertNull(tm.getInstanceCapturedCertificates("concurrent.test.com"));
+    }
+
+    @Test
+    void instanceCachesShouldBeIsolated() throws CertificateException {
+        // Two separate trust managers should have isolated instance caches
+        CertificateCapturingTrustManager tm1 =
+            new CertificateCapturingTrustManager(mockExtendedDelegate);
+        CertificateCapturingTrustManager tm2 =
+            new CertificateCapturingTrustManager(mockExtendedDelegate);
+
+        SSLEngine engine = mock(SSLEngine.class);
+        when(engine.getPeerHost()).thenReturn("isolated.example.com");
+
+        // Only tm1 captures a certificate
+        tm1.checkServerTrusted(certChain, "RSA", engine);
+
+        // tm1's instance cache should have the certificate
+        assertNotNull(tm1.getInstanceCapturedCertificates("isolated.example.com"));
+
+        // tm2's instance cache should NOT have it
+        assertNull(tm2.getInstanceCapturedCertificates("isolated.example.com"));
     }
 }

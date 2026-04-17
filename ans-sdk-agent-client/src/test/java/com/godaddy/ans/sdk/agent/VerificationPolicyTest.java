@@ -50,13 +50,6 @@ class VerificationPolicyTest {
     }
 
     @Test
-    void fullHasAllRequired() {
-        assertTrue(VerificationPolicy.FULL.hasAnyVerification());
-        assertEquals(VerificationMode.REQUIRED, VerificationPolicy.FULL.daneMode());
-        assertEquals(VerificationMode.REQUIRED, VerificationPolicy.FULL.badgeMode());
-    }
-
-    @Test
     void customBuilderDefaultsToDisabled() {
         VerificationPolicy policy = VerificationPolicy.custom().build();
 
@@ -100,18 +93,6 @@ class VerificationPolicyTest {
     }
 
     @Test
-    void constructorRejectsNullDaneMode() {
-        assertThrows(NullPointerException.class, () ->
-            new VerificationPolicy(null, VerificationMode.DISABLED));
-    }
-
-    @Test
-    void constructorRejectsNullBadgeMode() {
-        assertThrows(NullPointerException.class, () ->
-            new VerificationPolicy(VerificationMode.DISABLED, null));
-    }
-
-    @Test
     void builderRejectsNullDaneMode() {
         assertThrows(NullPointerException.class, () ->
             VerificationPolicy.custom().dane(null));
@@ -142,15 +123,6 @@ class VerificationPolicyTest {
     }
 
     @Test
-    void recordAccessors() {
-        VerificationPolicy policy = new VerificationPolicy(
-            VerificationMode.ADVISORY, VerificationMode.REQUIRED);
-
-        assertEquals(VerificationMode.ADVISORY, policy.daneMode());
-        assertEquals(VerificationMode.REQUIRED, policy.badgeMode());
-    }
-
-    @Test
     void hasAnyVerificationWithAdvisoryMode() {
         VerificationPolicy policy = VerificationPolicy.custom()
             .dane(VerificationMode.ADVISORY)
@@ -166,6 +138,83 @@ class VerificationPolicyTest {
         assertNotNull(VerificationPolicy.DANE_ADVISORY);
         assertNotNull(VerificationPolicy.DANE_REQUIRED);
         assertNotNull(VerificationPolicy.DANE_AND_BADGE);
-        assertNotNull(VerificationPolicy.FULL);
+    }
+
+    // Tests for allowsScittFallbackToBadge()
+
+    @Test
+    void scittEnhancedAllowsFallbackToBadge() {
+        assertTrue(VerificationPolicy.SCITT_ENHANCED.allowsScittFallbackToBadge(),
+            "SCITT_ENHANCED (scitt=REQUIRED, badge=ADVISORY) should allow fallback");
+    }
+
+    @Test
+    void scittRequiredDoesNotAllowFallbackToBadge() {
+        assertFalse(VerificationPolicy.SCITT_REQUIRED.allowsScittFallbackToBadge(),
+            "SCITT_REQUIRED (badge=DISABLED) should not allow fallback");
+    }
+
+    @Test
+    void badgeRequiredDoesNotAllowFallbackToBadge() {
+        assertFalse(VerificationPolicy.BADGE_REQUIRED.allowsScittFallbackToBadge(),
+            "BADGE_REQUIRED (scitt=DISABLED) should not allow fallback");
+    }
+
+    @Test
+    void customPolicyWithScittRequiredAndBadgeRequiredDoesNotAllowFallback() {
+        VerificationPolicy policy = VerificationPolicy.custom()
+            .scitt(VerificationMode.REQUIRED)
+            .badge(VerificationMode.REQUIRED)
+            .build();
+
+        assertFalse(policy.allowsScittFallbackToBadge(),
+            "When both SCITT and Badge are REQUIRED, no fallback should be allowed");
+    }
+
+    @Test
+    void customPolicyWithScittAdvisoryDoesNotAllowFallback() {
+        VerificationPolicy policy = VerificationPolicy.custom()
+            .scitt(VerificationMode.ADVISORY)
+            .badge(VerificationMode.ADVISORY)
+            .build();
+
+        assertFalse(policy.allowsScittFallbackToBadge(),
+            "SCITT ADVISORY mode should not allow fallback (must be REQUIRED)");
+    }
+
+    // Tests for rejectsInvalidScittHeaders()
+
+    @Test
+    void scittRequiredRejectsInvalidHeaders() {
+        assertTrue(VerificationPolicy.SCITT_REQUIRED.rejectsInvalidScittHeaders(),
+            "SCITT_REQUIRED should reject invalid headers");
+    }
+
+    @Test
+    void scittEnhancedRejectsInvalidHeaders() {
+        assertTrue(VerificationPolicy.SCITT_ENHANCED.rejectsInvalidScittHeaders(),
+            "SCITT_ENHANCED should reject invalid headers");
+    }
+
+    @Test
+    void badgeRequiredDoesNotRejectInvalidHeaders() {
+        assertFalse(VerificationPolicy.BADGE_REQUIRED.rejectsInvalidScittHeaders(),
+            "BADGE_REQUIRED (scitt=DISABLED) should not reject SCITT headers");
+    }
+
+    @Test
+    void pkiOnlyDoesNotRejectInvalidHeaders() {
+        assertFalse(VerificationPolicy.PKI_ONLY.rejectsInvalidScittHeaders(),
+            "PKI_ONLY should not reject SCITT headers");
+    }
+
+    @Test
+    void customPolicyWithScittAdvisoryRejectsInvalidHeaders() {
+        VerificationPolicy policy = VerificationPolicy.custom()
+            .scitt(VerificationMode.ADVISORY)
+            .build();
+
+        assertTrue(policy.rejectsInvalidScittHeaders(),
+            "SCITT ADVISORY should still reject invalid headers when present");
     }
 }

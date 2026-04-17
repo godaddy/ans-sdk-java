@@ -4,9 +4,7 @@ import com.godaddy.ans.sdk.agent.ConnectOptions;
 import com.godaddy.ans.sdk.agent.VerificationMode;
 import com.godaddy.ans.sdk.agent.VerificationPolicy;
 import com.godaddy.ans.sdk.agent.exception.AgentConnectionException;
-import com.godaddy.ans.sdk.agent.verification.BadgeVerifier;
 import com.godaddy.ans.sdk.agent.verification.ConnectionVerifier;
-import com.godaddy.ans.sdk.agent.verification.DaneVerifier;
 import com.godaddy.ans.sdk.agent.verification.DaneConfig;
 import com.godaddy.ans.sdk.agent.verification.DaneTlsaVerifier;
 import com.godaddy.ans.sdk.agent.verification.DefaultConnectionVerifier;
@@ -20,13 +18,6 @@ import com.godaddy.ans.sdk.transparency.verification.ServerVerifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.net.ssl.KeyManager;
-import javax.net.ssl.KeyManagerFactory;
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.SSLParameters;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.TrustManagerFactory;
-import javax.net.ssl.X509TrustManager;
 import java.net.http.HttpClient;
 import java.nio.file.Files;
 import java.security.KeyPair;
@@ -65,9 +56,6 @@ public class DefaultAgentHttpClientFactory implements AgentHttpClientFactory {
 
     private final DaneTlsaVerifier daneVerifier;
 
-    // Shared cached verification service - reduces blocking on repeated connections
-    private volatile CachingBadgeVerificationService cachedVerificationService;
-
     /**
      * Creates a factory with the default DANE verifier.
      */
@@ -99,20 +87,24 @@ public class DefaultAgentHttpClientFactory implements AgentHttpClientFactory {
         Objects.requireNonNull(connectTimeout, "Connect timeout cannot be null");
 
         try {
-            // Create HttpClient with PKI-only SSL (certificate capture)
-            SSLContext sslContext = createPkiOnlySslContext(options);
+            // Build client keystore from ConnectOptions (for mTLS)
+            KeyStore clientKeyStore = null;
+            if (options.hasClientCertificate()) {
+                clientKeyStore = buildClientKeyStore(options);
+            }
 
-            // Restrict to TLS 1.2 and 1.3 only (no TLS 1.0/1.1)
-            SSLParameters sslParameters = new SSLParameters();
-            sslParameters.setProtocols(new String[]{"TLSv1.2", "TLSv1.3"});
+            // Create SSLContext with certificate capture via shared factory
+            AnsVerifiedSslContextFactory.SslContextResult sslResult =
+                AnsVerifiedSslContextFactory.createWithTrustManager(clientKeyStore,
+                    DEFAULT_KEY_PASSWORD.toCharArray());
 
             HttpClient httpClient = HttpClient.newBuilder()
-                .sslContext(sslContext)
-                .sslParameters(sslParameters)
+                .sslContext(sslResult.sslContext())
+                .sslParameters(AnsVerifiedSslContextFactory.getSecureSslParameters())
                 .connectTimeout(connectTimeout)
                 .build();
 
-            // Create ConnectionVerifier based on policy
+            // Create ConnectionVerifier based on policy (with SCITT support)
             ConnectionVerifier verifier = createConnectionVerifier(options);
 
             // Create AnsHttpClient wrapper
@@ -120,6 +112,7 @@ public class DefaultAgentHttpClientFactory implements AgentHttpClientFactory {
                 .delegate(httpClient)
                 .connectionVerifier(verifier)
                 .verificationPolicy(options.getVerificationPolicy())
+                .certProvider(sslResult.trustManager())
                 .build();
 
             LOGGER.debug("Created verified client for {} with policy: {}",
@@ -136,69 +129,34 @@ public class DefaultAgentHttpClientFactory implements AgentHttpClientFactory {
     }
 
     /**
-     * Creates an SSL context with PKI-only validation and certificate capture.
-     *
-     * <p>The returned SSLContext uses {@link CertificateCapturingTrustManager}
-     * which performs standard PKI validation and captures the server certificate
-     * for post-handshake verification.</p>
-     */
-    private SSLContext createPkiOnlySslContext(ConnectOptions options) throws Exception {
-        KeyManager[] keyManagers = null;
-
-        // Load client certificate if provided (for mTLS)
-        if (options.hasClientCertificate()) {
-            keyManagers = loadKeyManagers(options);
-        }
-
-        // Use CertificateCapturingTrustManager for PKI-only + certificate capture
-        X509TrustManager systemTm = getSystemTrustManager();
-        CertificateCapturingTrustManager capturingTm = new CertificateCapturingTrustManager(systemTm);
-        TrustManager[] trustManagers = new TrustManager[]{capturingTm};
-
-        // Use "TLS" to allow version negotiation (supports TLS 1.2 and 1.3)
-        SSLContext sslContext = SSLContext.getInstance("TLS");
-        sslContext.init(keyManagers, trustManagers, null);
-
-        return sslContext;
-    }
-
-    /**
      * Creates a ConnectionVerifier based on the verification policy.
      *
-     * <p>This creates verifiers for DANE and Badge based on which
-     * verification modes are enabled in the policy.</p>
+     * <p>Delegates to {@link DefaultConnectionVerifier#fromPolicy} with the factory's
+     * DANE verifier and an optional badge service override for shared caching.</p>
      */
     private ConnectionVerifier createConnectionVerifier(ConnectOptions options) {
         VerificationPolicy policy = options.getVerificationPolicy();
-        DefaultConnectionVerifier.Builder builder = DefaultConnectionVerifier.builder();
+        TransparencyClient transparencyClient = options.getTransparencyClient();
+        ServerVerifier badgeService = getOrCreateVerificationService(options, policy);
 
-        // Add DANE verifier if not disabled
-        if (policy.daneMode() != VerificationMode.DISABLED) {
-            LOGGER.debug("DANE verification enabled (mode={})", policy.daneMode());
-            builder.daneVerifier(new DaneVerifier(daneVerifier));
-        }
-
-        // Add Badge verifier if not disabled
-        if (policy.badgeMode() != VerificationMode.DISABLED) {
-            ServerVerifier verificationService = getOrCreateVerificationService(options);
-            LOGGER.debug("Badge verification enabled (mode={}, cached=true)", policy.badgeMode());
-            builder.badgeVerifier(new BadgeVerifier(verificationService));
-        }
-
-        return builder.build();
+        return DefaultConnectionVerifier.fromPolicy(
+            policy, transparencyClient, daneVerifier, badgeService);
     }
 
     /**
-     * Gets or creates a verification service for identity verification.
+     * Gets or creates a badge verification service.
      *
-     * <p>If an explicit TransparencyClient is provided in options, a fresh service is created
-     * for that client (not cached). This allows callers to use different transparency endpoints
-     * (e.g., production vs OTE) for different connections.</p>
+     * <p>Returns null if badge verification is disabled. Requires an explicit
+     * TransparencyClient in ConnectOptions when badge verification is enabled.</p>
      *
-     * <p>If no TransparencyClient is provided, a shared cached service is used which reduces
-     * blocking during TLS handshakes for repeated connections to the same hosts.</p>
+     * @throws IllegalStateException if badge is enabled but no TransparencyClient provided
      */
-    private ServerVerifier getOrCreateVerificationService(ConnectOptions options) {
+    private ServerVerifier getOrCreateVerificationService(ConnectOptions options,
+                                                           VerificationPolicy policy) {
+        if (policy.badgeMode() == VerificationMode.DISABLED) {
+            return null;
+        }
+
         // If explicit TransparencyClient provided, create a fresh service (don't cache)
         TransparencyClient explicitClient = options.getTransparencyClient();
         if (explicitClient != null) {
@@ -206,55 +164,23 @@ public class DefaultAgentHttpClientFactory implements AgentHttpClientFactory {
             BadgeVerificationService delegate = BadgeVerificationService.builder()
                 .transparencyClient(explicitClient)
                 .build();
-            // Wrap in caching for this client instance
             return CachingBadgeVerificationService.builder()
                 .delegate(delegate)
                 .build();
         }
 
-        // No explicit client - use shared cached default service
-        if (cachedVerificationService == null) {
-            synchronized (this) {
-                if (cachedVerificationService == null) {
-                    TransparencyClient defaultClient = TransparencyClient.create();
-
-                    BadgeVerificationService delegate = BadgeVerificationService.builder()
-                        .transparencyClient(defaultClient)
-                        .build();
-
-                    cachedVerificationService = CachingBadgeVerificationService.builder()
-                        .delegate(delegate)
-                        .build();
-
-                    LOGGER.debug("Created cached default verification service"
-                            + " (15 min positive TTL, 5 min negative TTL)");
-                }
-            }
-        }
-        return cachedVerificationService;
+        // No explicit client - badge verification requires a TransparencyClient
+        throw new IllegalStateException(
+            "Badge verification is enabled but no TransparencyClient was provided in "
+            + "ConnectOptions. Use ConnectOptions.builder().transparencyClient("
+            + "TransparencyClient.builder().baseUrl(...).build()) to specify the "
+            + "transparency log environment.");
     }
 
     /**
-     * Gets the JVM's default trust manager.
+     * Builds a client keystore from ConnectOptions for mTLS.
      */
-    private X509TrustManager getSystemTrustManager() throws Exception {
-        TrustManagerFactory tmf = TrustManagerFactory.getInstance(
-            TrustManagerFactory.getDefaultAlgorithm());
-        tmf.init((KeyStore) null);
-
-        for (TrustManager tm : tmf.getTrustManagers()) {
-            if (tm instanceof X509TrustManager) {
-                return (X509TrustManager) tm;
-            }
-        }
-
-        throw new IllegalStateException("No X509TrustManager found");
-    }
-
-    /**
-     * Loads key managers for client certificate (mTLS).
-     */
-    private KeyManager[] loadKeyManagers(ConnectOptions options) throws Exception {
+    private KeyStore buildClientKeyStore(ConnectOptions options) throws Exception {
         Certificate[] certChain;
         PrivateKey key;
 
@@ -284,10 +210,6 @@ public class DefaultAgentHttpClientFactory implements AgentHttpClientFactory {
         keyStore.load(null, null);
         keyStore.setKeyEntry("client", key, DEFAULT_KEY_PASSWORD.toCharArray(), certChain);
 
-        KeyManagerFactory kmf = KeyManagerFactory.getInstance(
-            KeyManagerFactory.getDefaultAlgorithm());
-        kmf.init(keyStore, DEFAULT_KEY_PASSWORD.toCharArray());
-
-        return kmf.getKeyManagers();
+        return keyStore;
     }
 }

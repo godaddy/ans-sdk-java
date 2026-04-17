@@ -86,7 +86,7 @@ class NoOpConnectionVerifierTest {
         VerificationResult result2 = verifier.combine(List.of(), VerificationPolicy.BADGE_REQUIRED);
         assertFalse(result2.shouldFail());
 
-        VerificationResult result3 = verifier.combine(List.of(), VerificationPolicy.FULL);
+        VerificationResult result3 = verifier.combine(List.of(), VerificationPolicy.DANE_AND_BADGE);
         assertFalse(result3.shouldFail());
     }
 

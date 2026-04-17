@@ -18,6 +18,7 @@ import java.security.cert.X509Certificate;
 import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.times;
@@ -203,57 +204,6 @@ class CachingBadgeVerificationServiceTest {
         verify(delegate, times(1)).verifyServer(TEST_HOSTNAME); // Still only 1 call
     }
 
-    // ==================== Background Refresh / Cache Management ====================
-
-    @Test
-    @DisplayName("Should evict expired entries when evictExpired is called")
-    void shouldEvictExpiredEntriesWhenEvictExpiredCalled() throws InterruptedException {
-        // Given - very short TTL
-        cachingService = CachingBadgeVerificationService.builder()
-            .delegate(delegate)
-            .cacheTtl(Duration.ofMillis(50))
-            .build();
-
-        ServerVerificationResult result = createSuccessfulServerResult();
-        when(delegate.verifyServer(TEST_HOSTNAME)).thenReturn(result);
-
-        // Populate cache
-        cachingService.verifyServer(TEST_HOSTNAME);
-        assertThat(cachingService.serverCacheSize()).isEqualTo(1);
-
-        // Wait for expiry
-        Thread.sleep(100);
-
-        // When - evict expired entries
-        cachingService.evictExpired();
-
-        // Then - cache is empty
-        assertThat(cachingService.serverCacheSize()).isEqualTo(0);
-    }
-
-    @Test
-    @DisplayName("Should not evict non-expired entries when evictExpired is called")
-    void shouldNotEvictNonExpiredEntriesWhenEvictExpiredCalled() {
-        // Given - long TTL
-        cachingService = CachingBadgeVerificationService.builder()
-            .delegate(delegate)
-            .cacheTtl(Duration.ofMinutes(15))
-            .build();
-
-        ServerVerificationResult result = createSuccessfulServerResult();
-        when(delegate.verifyServer(TEST_HOSTNAME)).thenReturn(result);
-
-        // Populate cache
-        cachingService.verifyServer(TEST_HOSTNAME);
-        assertThat(cachingService.serverCacheSize()).isEqualTo(1);
-
-        // When - evict expired entries (none should be expired)
-        cachingService.evictExpired();
-
-        // Then - cache still has entry
-        assertThat(cachingService.serverCacheSize()).isEqualTo(1);
-    }
-
     // ==================== Cache Invalidation ====================
 
     @Test
@@ -347,11 +297,11 @@ class CachingBadgeVerificationServiceTest {
         verify(delegate, times(1)).verifyServer(TEST_HOSTNAME);
     }
 
-    // ==================== Lazy Eviction Tests ====================
+    // ==================== Expiration Tests ====================
 
     @Test
-    @DisplayName("Should lazily remove expired server entry on cache miss")
-    void shouldLazilyRemoveExpiredServerEntryOnCacheMiss() throws InterruptedException {
+    @DisplayName("Should reload expired server entries")
+    void shouldReloadExpiredServerEntries() throws InterruptedException {
         // Given - very short TTL
         cachingService = CachingBadgeVerificationService.builder()
             .delegate(delegate)
@@ -363,28 +313,21 @@ class CachingBadgeVerificationServiceTest {
 
         // Populate cache
         cachingService.verifyServer(TEST_HOSTNAME);
-        assertThat(cachingService.serverCacheSize()).isEqualTo(1);
+        verify(delegate, times(1)).verifyServer(TEST_HOSTNAME);
 
         // Wait for expiry
         Thread.sleep(100);
 
-        // Cache still has 1 entry (expired but not evicted yet)
-        assertThat(cachingService.serverCacheSize()).isEqualTo(1);
-
-        // When - access expired entry (should trigger lazy eviction + refresh)
+        // When - access expired entry (triggers reload)
         cachingService.verifyServer(TEST_HOSTNAME);
 
-        // Then - expired entry was removed and replaced with fresh one
-        // Cache size should still be 1 (the new entry)
-        assertThat(cachingService.serverCacheSize()).isEqualTo(1);
-
-        // And delegate was called twice (initial + refresh after expiry)
+        // Then - delegate was called again
         verify(delegate, times(2)).verifyServer(TEST_HOSTNAME);
     }
 
     @Test
-    @DisplayName("Should lazily remove expired client entry on cache miss")
-    void shouldLazilyRemoveExpiredClientEntryOnCacheMiss() throws Exception {
+    @DisplayName("Should reload expired client entries")
+    void shouldReloadExpiredClientEntries() throws Exception {
         // Given - very short TTL
         cachingService = CachingBadgeVerificationService.builder()
             .delegate(delegate)
@@ -399,61 +342,68 @@ class CachingBadgeVerificationServiceTest {
 
         // Populate cache
         cachingService.verifyClient(mockCertificate);
-        assertThat(cachingService.clientCacheSize()).isEqualTo(1);
+        verify(delegate, times(1)).verifyClient(mockCertificate);
 
         // Wait for expiry
         Thread.sleep(100);
 
-        // Cache still has 1 entry (expired but not evicted yet)
-        assertThat(cachingService.clientCacheSize()).isEqualTo(1);
-
-        // When - access expired entry (should trigger lazy eviction + refresh)
+        // When - access expired entry (triggers reload)
         cachingService.verifyClient(mockCertificate);
 
-        // Then - expired entry was removed and replaced with fresh one
-        assertThat(cachingService.clientCacheSize()).isEqualTo(1);
-
-        // And delegate was called twice
+        // Then - delegate was called again
         verify(delegate, times(2)).verifyClient(mockCertificate);
     }
 
     @Test
-    @DisplayName("Should remove expired entry immediately when accessed, not wait for put")
-    void shouldRemoveExpiredEntryImmediatelyWhenAccessed() throws InterruptedException {
-        // This test verifies that expired entries are REMOVED when found,
-        // not just overwritten by a subsequent put. This matters for memory
-        // because the old CachedResult object should be eligible for GC immediately.
-
-        // Given - very short TTL
+    @DisplayName("Should not cache result when delegate throws exception")
+    void shouldNotCacheResultWhenDelegateThrows() {
+        // Given
         cachingService = CachingBadgeVerificationService.builder()
             .delegate(delegate)
-            .cacheTtl(Duration.ofMillis(50))
+            .cacheTtl(Duration.ofMinutes(15))
             .build();
 
-        // Mock delegate to throw on second call - this way we can verify
-        // that removal happens even when the refresh fails
-        ServerVerificationResult firstResult = createSuccessfulServerResult();
         when(delegate.verifyServer(TEST_HOSTNAME))
-            .thenReturn(firstResult)
             .thenThrow(new RuntimeException("Network error"));
 
-        // Populate cache
-        cachingService.verifyServer(TEST_HOSTNAME);
-        assertThat(cachingService.serverCacheSize()).isEqualTo(1);
+        // When - first call throws
+        assertThatThrownBy(() -> cachingService.verifyServer(TEST_HOSTNAME))
+            .isInstanceOf(RuntimeException.class)
+            .hasMessage("Network error");
 
-        // Wait for expiry
+        // Then - cache should be empty (nothing was cached)
+        assertThat(cachingService.serverCacheSize()).isEqualTo(0);
+    }
+
+    @Test
+    @DisplayName("Should use different TTLs for positive and negative results")
+    void shouldUseDifferentTtlsForPositiveAndNegativeResults() throws InterruptedException {
+        // Given - positive TTL = 200ms, negative TTL = 50ms
+        cachingService = CachingBadgeVerificationService.builder()
+            .delegate(delegate)
+            .cacheTtl(Duration.ofMillis(200))
+            .negativeCacheTtl(Duration.ofMillis(50))
+            .build();
+
+        ServerVerificationResult failureResult = createFailedServerResult();
+        ServerVerificationResult successResult = createSuccessfulServerResult();
+        when(delegate.verifyServer(TEST_HOSTNAME))
+            .thenReturn(failureResult)
+            .thenReturn(successResult);
+
+        // When - first call returns failure
+        cachingService.verifyServer(TEST_HOSTNAME);
+        verify(delegate, times(1)).verifyServer(TEST_HOSTNAME);
+
+        // Wait past negative TTL (50ms) but not past positive TTL (200ms)
         Thread.sleep(100);
 
-        // When - access expired entry (refresh will fail)
-        try {
-            cachingService.verifyServer(TEST_HOSTNAME);
-        } catch (RuntimeException e) {
-            // Expected - delegate threw
-        }
+        // When - call again (negative cache should have expired)
+        ServerVerificationResult result = cachingService.verifyServer(TEST_HOSTNAME);
 
-        // Then - expired entry should have been removed BEFORE the failed refresh
-        // So cache should be empty (not still holding the stale entry)
-        assertThat(cachingService.serverCacheSize()).isEqualTo(0);
+        // Then - should have fetched new result (success this time)
+        assertThat(result.getStatus()).isEqualTo(VerificationStatus.VERIFIED);
+        verify(delegate, times(2)).verifyServer(TEST_HOSTNAME);
     }
 
     // ==================== Helper Methods ====================

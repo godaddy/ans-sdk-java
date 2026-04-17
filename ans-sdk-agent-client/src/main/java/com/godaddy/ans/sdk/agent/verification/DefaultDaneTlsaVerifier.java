@@ -16,10 +16,10 @@ import org.xbill.DNS.lookup.LookupResult;
 import org.xbill.DNS.lookup.LookupSession;
 
 import java.io.IOException;
+import java.security.MessageDigest;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -175,7 +175,7 @@ public class DefaultDaneTlsaVerifier implements DaneTlsaVerifier {
             try {
                 byte[] certData = TlsaUtils.computeCertificateData(serverCert, tlsaRecord.selector,
                         tlsaRecord.matchingType);
-                if (Arrays.equals(certData, tlsaRecord.certificateData)) {
+                if (MessageDigest.isEqual(certData, tlsaRecord.certificateData)) {
                     String matchType = TlsaUtils.describeMatchType(tlsaRecord.selector, tlsaRecord.matchingType);
                     LOGGER.debug("TLSA match found: {} (record {} of {})",
                         matchType, tlsaRecords.indexOf(tlsaRecord) + 1, tlsaRecords.size());

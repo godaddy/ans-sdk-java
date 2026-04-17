@@ -13,6 +13,10 @@ import com.godaddy.ans.sdk.transparency.model.TransparencyLog;
 import com.godaddy.ans.sdk.transparency.model.TransparencyLogAudit;
 import com.godaddy.ans.sdk.transparency.model.TransparencyLogV0;
 import com.godaddy.ans.sdk.transparency.model.TransparencyLogV1;
+import com.godaddy.ans.sdk.transparency.scitt.RefreshDecision;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.URI;
@@ -21,34 +25,39 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.security.PublicKey;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.Map;
 import java.util.StringJoiner;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Internal service for handling transparency log API calls.
  */
-class TransparencyService {
+class TransparencyService implements AutoCloseable {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(TransparencyService.class);
     private static final String SCHEMA_VERSION_HEADER = "X-Schema-Version";
 
     private final String baseUrl;
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
     private final Duration readTimeout;
+    private final RootKeyManager rootKeyManager;
 
-    TransparencyService(String baseUrl, Duration connectTimeout, Duration readTimeout) {
+    TransparencyService(String baseUrl, Duration connectTimeout, Duration readTimeout, Duration rootKeyCacheTtl) {
         this.baseUrl = baseUrl;
         this.readTimeout = readTimeout;
         this.httpClient = HttpClient.newBuilder()
             .connectTimeout(connectTimeout)
-            .followRedirects(HttpClient.Redirect.NORMAL)
-            .version(HttpClient.Version.HTTP_1_1)
+            .followRedirects(HttpClient.Redirect.NEVER)
             .build();
         this.objectMapper = new ObjectMapper();
         this.objectMapper.registerModule(new JavaTimeModule());
         this.objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+        this.rootKeyManager = new RootKeyManager(httpClient, baseUrl, readTimeout, rootKeyCacheTtl);
     }
 
     /**
@@ -139,6 +148,157 @@ class TransparencyService {
     }
 
     /**
+     * Gets the SCITT receipt for an agent.
+     *
+     * @param agentId the agent's unique identifier
+     * @return the raw receipt bytes (COSE_Sign1)
+     */
+    byte[] getReceipt(String agentId) {
+        String path = "/v1/agents/" + URLEncoder.encode(agentId, StandardCharsets.UTF_8) + "/receipt";
+        return fetchBinaryResponse(path, "application/scitt-receipt+cose");
+    }
+
+    /**
+     * Gets the status token for an agent.
+     *
+     * @param agentId the agent's unique identifier
+     * @return the raw status token bytes (COSE_Sign1)
+     */
+    byte[] getStatusToken(String agentId) {
+        String path = "/v1/agents/" + URLEncoder.encode(agentId, StandardCharsets.UTF_8) + "/status-token";
+        return fetchBinaryResponse(path, "application/ans-status-token+cbor");
+    }
+
+    /**
+     * Gets the SCITT receipt for an agent asynchronously using non-blocking I/O.
+     *
+     * @param agentId the agent's unique identifier
+     * @return a CompletableFuture with the raw receipt bytes (COSE_Sign1)
+     */
+    CompletableFuture<byte[]> getReceiptAsync(String agentId) {
+        String path = "/v1/agents/" + URLEncoder.encode(agentId, StandardCharsets.UTF_8) + "/receipt";
+        return fetchBinaryResponseAsync(path, "application/scitt-receipt+cose");
+    }
+
+    /**
+     * Gets the status token for an agent asynchronously using non-blocking I/O.
+     *
+     * @param agentId the agent's unique identifier
+     * @return a CompletableFuture with the raw status token bytes (COSE_Sign1)
+     */
+    CompletableFuture<byte[]> getStatusTokenAsync(String agentId) {
+        String path = "/v1/agents/" + URLEncoder.encode(agentId, StandardCharsets.UTF_8) + "/status-token";
+        return fetchBinaryResponseAsync(path, "application/ans-status-token+cbor");
+    }
+
+    /**
+     * Returns the SCITT root public keys asynchronously, using cached values if available.
+     *
+     * <p>The root keys are cached with a configurable TTL to avoid redundant
+     * network calls on every verification request. Concurrent callers share
+     * a single in-flight fetch to prevent cache stampedes.</p>
+     *
+     * <p>The returned map is keyed by hex key ID (4-byte SHA-256 of SPKI-DER),
+     * enabling O(1) lookup by key ID from COSE headers.</p>
+     *
+     * @return a CompletableFuture with the root public keys for verifying receipts and status tokens
+     */
+    CompletableFuture<Map<String, PublicKey>> getRootKeysAsync() {
+        return rootKeyManager.getRootKeysAsync();
+    }
+
+    /**
+     * Invalidates the cached root key, forcing the next call to fetch from the server.
+     */
+    void invalidateRootKeyCache() {
+        rootKeyManager.invalidateRootKeyCache();
+    }
+
+    /**
+     * Returns the timestamp when the root key cache was last populated.
+     *
+     * @return the cache population timestamp, or {@link Instant#EPOCH} if never populated
+     */
+    Instant getCachePopulatedAt() {
+        return rootKeyManager.getCachePopulatedAt();
+    }
+
+    /**
+     * Attempts to refresh the root key cache if the artifact's issued-at timestamp
+     * indicates it may have been signed with a new key not yet in our cache.
+     *
+     * <p>Security checks performed:</p>
+     * <ol>
+     *   <li>Reject artifacts claiming to be from the future (beyond clock skew tolerance)</li>
+     *   <li>Reject artifacts older than our cache (key should already be present)</li>
+     *   <li>Enforce global cooldown to prevent cache thrashing attacks</li>
+     * </ol>
+     *
+     * @param artifactIssuedAt the issued-at timestamp from the SCITT artifact
+     * @return a future containing the refresh decision with action, reason, and optionally refreshed keys
+     */
+    CompletableFuture<RefreshDecision> refreshRootKeysIfNeeded(Instant artifactIssuedAt) {
+        return rootKeyManager.refreshRootKeysIfNeeded(artifactIssuedAt);
+    }
+
+    @Override
+    public void close() {
+        httpClient.executor().ifPresent(e -> {
+            if (e instanceof java.util.concurrent.ExecutorService es) {
+                es.shutdown();
+            }
+        });
+    }
+
+    /**
+     * Fetches a binary response from the API.
+     */
+    private byte[] fetchBinaryResponse(String path, String acceptHeader) {
+        HttpRequest request = buildBinaryRequest(path, acceptHeader);
+
+        try {
+            HttpResponse<byte[]> response = httpClient.send(
+                request, HttpResponse.BodyHandlers.ofByteArray());
+            String requestId = response.headers().firstValue("X-Request-Id").orElse(null);
+            String body = new String(response.body(), StandardCharsets.UTF_8);
+            throwForStatus(response.statusCode(), body, requestId);
+            return response.body();
+        } catch (IOException e) {
+            throw new AnsServerException("Network error: " + e.getMessage(), 0, e, null);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new AnsServerException("Request interrupted", 0, e, null);
+        }
+    }
+
+    /**
+     * Fetches a binary response from the API asynchronously using non-blocking I/O.
+     */
+    private CompletableFuture<byte[]> fetchBinaryResponseAsync(String path, String acceptHeader) {
+        HttpRequest request = buildBinaryRequest(path, acceptHeader);
+
+        return httpClient.sendAsync(request, HttpResponse.BodyHandlers.ofByteArray())
+            .thenApply(response -> {
+                String requestId = response.headers().firstValue("X-Request-Id").orElse(null);
+                String body = new String(response.body(), StandardCharsets.UTF_8);
+                throwForStatus(response.statusCode(), body, requestId);
+                return response.body();
+            });
+    }
+
+    /**
+     * Builds an HTTP request for binary content.
+     */
+    private HttpRequest buildBinaryRequest(String path, String acceptHeader) {
+        return HttpRequest.newBuilder()
+            .uri(URI.create(baseUrl + path))
+            .header("Accept", acceptHeader)
+            .timeout(readTimeout)
+            .GET()
+            .build();
+    }
+
+    /**
      * Fetches a transparency log entry with schema version handling.
      */
     private TransparencyLog fetchWithSchemaVersion(String path) {
@@ -182,19 +342,16 @@ class TransparencyService {
         }
 
         try {
-            String payloadJson = objectMapper.writeValueAsString(result.getPayload());
-
             if ("V1".equalsIgnoreCase(schemaVersion)) {
-                TransparencyLogV1 v1 = objectMapper.readValue(payloadJson, TransparencyLogV1.class);
+                TransparencyLogV1 v1 = objectMapper.convertValue(result.getPayload(), TransparencyLogV1.class);
                 result.setParsedPayload(v1);
             } else {
                 // V0 is default for missing or unknown schema version
-                TransparencyLogV0 v0 = objectMapper.readValue(payloadJson, TransparencyLogV0.class);
+                TransparencyLogV0 v0 = objectMapper.convertValue(result.getPayload(), TransparencyLogV0.class);
                 result.setParsedPayload(v0);
             }
-        } catch (IOException e) {
-            // If parsing fails, leave parsedPayload as null
-            // The raw payload is still available
+        } catch (IllegalArgumentException e) {
+            LOGGER.warn("Failed to parse {} payload: {}", schemaVersion, e.getMessage());
         }
     }
 
@@ -219,17 +376,24 @@ class TransparencyService {
      * Handles error responses from the API.
      */
     private void handleErrorResponse(HttpResponse<String> response) {
-        int statusCode = response.statusCode();
+        String requestId = response.headers().firstValue("X-Request-Id").orElse(null);
+        throwForStatus(response.statusCode(), response.body(), requestId);
+    }
 
+    /**
+     * Throws an appropriate exception for non-success HTTP status codes.
+     *
+     * @param statusCode the HTTP status code
+     * @param body the response body as a string
+     * @param requestId the request ID from headers, may be null
+     */
+    private void throwForStatus(int statusCode, String body, String requestId) {
         if (statusCode >= 200 && statusCode < 300) {
             return; // Success
         }
 
-        String requestId = response.headers().firstValue("X-Request-Id").orElse(null);
-        String body = response.body();
-
         if (statusCode == 404) {
-            throw new AnsNotFoundException("Agent not found: " + body, null, null, requestId);
+            throw new AnsNotFoundException("Resource not found: " + body, null, null, requestId);
         } else if (statusCode >= 500) {
             throw new AnsServerException("Server error: " + body, statusCode, requestId);
         } else {
@@ -253,46 +417,68 @@ class TransparencyService {
      * Appends audit parameters to the path.
      */
     private String appendAuditParams(String path, AgentAuditParams params) {
-        StringJoiner joiner = new StringJoiner("&");
-        if (params.getOffset() > 0) {
-            joiner.add("offset=" + params.getOffset());
-        }
-        if (params.getLimit() > 0) {
-            joiner.add("limit=" + params.getLimit());
-        }
-        if (joiner.length() > 0) {
-            return path + "?" + joiner;
-        }
-        return path;
+        QueryParamBuilder builder = new QueryParamBuilder();
+        builder.addIfPositive("offset", params.getOffset());
+        builder.addIfPositive("limit", params.getLimit());
+        return builder.buildUrl(path);
     }
 
     /**
      * Appends checkpoint history parameters to the path.
      */
     private String appendCheckpointHistoryParams(String path, CheckpointHistoryParams params) {
-        StringJoiner joiner = new StringJoiner("&");
-        if (params.getLimit() > 0) {
-            joiner.add("limit=" + params.getLimit());
-        }
-        if (params.getOffset() > 0) {
-            joiner.add("offset=" + params.getOffset());
-        }
-        if (params.getFromSize() > 0) {
-            joiner.add("fromSize=" + params.getFromSize());
-        }
-        if (params.getToSize() > 0) {
-            joiner.add("toSize=" + params.getToSize());
-        }
+        QueryParamBuilder builder = new QueryParamBuilder();
+        builder.addIfPositive("limit", params.getLimit());
+        builder.addIfPositive("offset", params.getOffset());
+        builder.addIfPositive("fromSize", params.getFromSize());
+        builder.addIfPositive("toSize", params.getToSize());
         if (params.getSince() != null) {
             String since = params.getSince().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
-            joiner.add("since=" + URLEncoder.encode(since, StandardCharsets.UTF_8));
+            builder.addEncoded("since", since);
         }
-        if (params.getOrder() != null && !params.getOrder().isEmpty()) {
-            joiner.add("order=" + URLEncoder.encode(params.getOrder(), StandardCharsets.UTF_8));
+        builder.addEncodedIfNotEmpty("order", params.getOrder());
+        return builder.buildUrl(path);
+    }
+
+    /**
+     * Helper for building URL query strings.
+     */
+    private static final class QueryParamBuilder {
+        private final StringJoiner joiner = new StringJoiner("&");
+
+        /**
+         * Adds a parameter if the value is positive.
+         */
+        void addIfPositive(String name, long value) {
+            if (value > 0) {
+                joiner.add(name + "=" + value);
+            }
         }
-        if (joiner.length() > 0) {
-            return path + "?" + joiner;
+
+        /**
+         * Adds a URL-encoded parameter.
+         */
+        void addEncoded(String name, String value) {
+            joiner.add(name + "=" + URLEncoder.encode(value, StandardCharsets.UTF_8));
         }
-        return path;
+
+        /**
+         * Adds a URL-encoded parameter if the value is not null or empty.
+         */
+        void addEncodedIfNotEmpty(String name, String value) {
+            if (value != null && !value.isEmpty()) {
+                addEncoded(name, value);
+            }
+        }
+
+        /**
+         * Builds the final URL with query string.
+         */
+        String buildUrl(String path) {
+            if (joiner.length() > 0) {
+                return path + "?" + joiner;
+            }
+            return path;
+        }
     }
 }

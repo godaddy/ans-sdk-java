@@ -33,5 +33,18 @@ public enum VerificationMode {
      * <p>If verification fails, the connection is rejected with an exception.
      * Use this for strict security requirements where verification must succeed.</p>
      */
-    REQUIRED
+    REQUIRED,
+
+    /**
+     * Prefer this verification but allow fallback to another method if unavailable.
+     *
+     * <p>Currently only supported for SCITT mode. When SCITT headers are not present,
+     * verification falls back to badge verification (which must be REQUIRED).
+     * If SCITT headers are present, they must verify successfully.</p>
+     *
+     * <p>Use this during migration when some endpoints may not yet provide SCITT headers.</p>
+     *
+     * @see VerificationPolicy#SCITT_ENHANCED
+     */
+    FALLBACK_ALLOWED
 }

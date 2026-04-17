@@ -1,9 +1,12 @@
 package com.godaddy.ans.sdk.agent.verification;
 
+import com.godaddy.ans.sdk.transparency.scitt.ScittExpectation;
+import com.godaddy.ans.sdk.transparency.scitt.ScittPreVerifyResult;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -84,7 +87,7 @@ class PreVerificationResultTest {
         fingerprints.add("fp1");
 
         PreVerificationResult result = new PreVerificationResult(
-            "test.com", 443, List.of(), false, null, fingerprints, false, null, Instant.now());
+            "test.com", 443, List.of(), false, null, fingerprints, false, null, null, Instant.now());
 
         assertEquals(1, result.badgeFingerprints().size());
         // The list should be immutable
@@ -100,6 +103,7 @@ class PreVerificationResultTest {
         assertTrue(str.contains("test.com"));
         assertTrue(str.contains("443"));
         assertTrue(str.contains("hasBadge=true"));
+        assertTrue(str.contains("hasScitt="));
     }
 
     @Test
@@ -189,5 +193,180 @@ class PreVerificationResultTest {
 
         assertFalse(result.daneDnsError());
         assertNull(result.daneDnsErrorMessage());
+    }
+
+    // ==================== SCITT Tests ====================
+
+    @Test
+    void hasScittExpectationReturnsFalseWhenNull() {
+        PreVerificationResult result = PreVerificationResult.builder("test.com", 443).build();
+
+        assertFalse(result.hasScittExpectation());
+    }
+
+    @Test
+    void hasScittExpectationReturnsFalseWhenNotPresent() {
+        ScittPreVerifyResult scittResult = ScittPreVerifyResult.notPresent();
+
+        PreVerificationResult result = PreVerificationResult.builder("test.com", 443)
+            .scittPreVerifyResult(scittResult)
+            .build();
+
+        assertFalse(result.hasScittExpectation());
+    }
+
+    @Test
+    void hasScittExpectationReturnsTrueWhenPresent() {
+        ScittExpectation expectation = ScittExpectation.verified(
+            List.of("fp1"), List.of(), "test.ans", Map.of(), null);
+        ScittPreVerifyResult scittResult = ScittPreVerifyResult.verified(expectation, null, null);
+
+        PreVerificationResult result = PreVerificationResult.builder("test.com", 443)
+            .scittPreVerifyResult(scittResult)
+            .build();
+
+        assertTrue(result.hasScittExpectation());
+    }
+
+    @Test
+    void hasScittExpectationReturnsTrueForParseError() {
+        ScittPreVerifyResult scittResult = ScittPreVerifyResult.parseError("Failed to parse receipt");
+
+        PreVerificationResult result = PreVerificationResult.builder("test.com", 443)
+            .scittPreVerifyResult(scittResult)
+            .build();
+
+        // Parse error means headers were present, just couldn't parse them
+        assertTrue(result.hasScittExpectation());
+    }
+
+    @Test
+    void scittPreVerifySucceededReturnsFalseWhenNull() {
+        PreVerificationResult result = PreVerificationResult.builder("test.com", 443).build();
+
+        assertFalse(result.scittPreVerifySucceeded());
+    }
+
+    @Test
+    void scittPreVerifySucceededReturnsFalseWhenNotPresent() {
+        ScittPreVerifyResult scittResult = ScittPreVerifyResult.notPresent();
+
+        PreVerificationResult result = PreVerificationResult.builder("test.com", 443)
+            .scittPreVerifyResult(scittResult)
+            .build();
+
+        assertFalse(result.scittPreVerifySucceeded());
+    }
+
+    @Test
+    void scittPreVerifySucceededReturnsFalseWhenParseError() {
+        ScittPreVerifyResult scittResult = ScittPreVerifyResult.parseError("Invalid CBOR");
+
+        PreVerificationResult result = PreVerificationResult.builder("test.com", 443)
+            .scittPreVerifyResult(scittResult)
+            .build();
+
+        assertFalse(result.scittPreVerifySucceeded());
+    }
+
+    @Test
+    void scittPreVerifySucceededReturnsFalseForInvalidReceipt() {
+        ScittExpectation expectation = ScittExpectation.invalidReceipt("Signature verification failed");
+        ScittPreVerifyResult scittResult = ScittPreVerifyResult.verified(expectation, null, null);
+
+        PreVerificationResult result = PreVerificationResult.builder("test.com", 443)
+            .scittPreVerifyResult(scittResult)
+            .build();
+
+        assertFalse(result.scittPreVerifySucceeded());
+    }
+
+    @Test
+    void scittPreVerifySucceededReturnsFalseForExpired() {
+        ScittExpectation expectation = ScittExpectation.expired();
+        ScittPreVerifyResult scittResult = ScittPreVerifyResult.verified(expectation, null, null);
+
+        PreVerificationResult result = PreVerificationResult.builder("test.com", 443)
+            .scittPreVerifyResult(scittResult)
+            .build();
+
+        assertFalse(result.scittPreVerifySucceeded());
+    }
+
+    @Test
+    void scittPreVerifySucceededReturnsFalseForRevoked() {
+        ScittExpectation expectation = ScittExpectation.revoked("test.ans");
+        ScittPreVerifyResult scittResult = ScittPreVerifyResult.verified(expectation, null, null);
+
+        PreVerificationResult result = PreVerificationResult.builder("test.com", 443)
+            .scittPreVerifyResult(scittResult)
+            .build();
+
+        assertFalse(result.scittPreVerifySucceeded());
+    }
+
+    @Test
+    void scittPreVerifySucceededReturnsTrueWhenVerified() {
+        ScittExpectation expectation = ScittExpectation.verified(
+            List.of("server-fp"), List.of("identity-fp"), "test.ans", Map.of(), null);
+        ScittPreVerifyResult scittResult = ScittPreVerifyResult.verified(expectation, null, null);
+
+        PreVerificationResult result = PreVerificationResult.builder("test.com", 443)
+            .scittPreVerifyResult(scittResult)
+            .build();
+
+        assertTrue(result.scittPreVerifySucceeded());
+    }
+
+    @Test
+    void builderWithScittPreVerifyResult() {
+        ScittExpectation expectation = ScittExpectation.verified(
+            List.of("fp1", "fp2"), List.of(), "test.ans", Map.of("https", "SHA256:abc"), null);
+        ScittPreVerifyResult scittResult = ScittPreVerifyResult.verified(expectation, null, null);
+
+        PreVerificationResult result = PreVerificationResult.builder("test.com", 443)
+            .scittPreVerifyResult(scittResult)
+            .build();
+
+        assertNotNull(result.scittPreVerifyResult());
+        assertEquals(scittResult, result.scittPreVerifyResult());
+        assertTrue(result.hasScittExpectation());
+        assertTrue(result.scittPreVerifySucceeded());
+    }
+
+    @Test
+    void toStringIncludesScittInfo() {
+        ScittExpectation expectation = ScittExpectation.verified(
+            List.of("fp1"), List.of(), "test.ans", Map.of(), null);
+        ScittPreVerifyResult scittResult = ScittPreVerifyResult.verified(expectation, null, null);
+
+        PreVerificationResult result = PreVerificationResult.builder("test.com", 443)
+            .scittPreVerifyResult(scittResult)
+            .build();
+
+        String str = result.toString();
+        assertTrue(str.contains("hasScitt=true"));
+    }
+
+    @Test
+    void toStringShowsScittFalseWhenNotPresent() {
+        PreVerificationResult result = PreVerificationResult.builder("test.com", 443).build();
+
+        String str = result.toString();
+        assertTrue(str.contains("hasScitt=false"));
+    }
+
+    @Test
+    void recordConstructorWithScittPreVerifyResult() {
+        ScittExpectation expectation = ScittExpectation.verified(
+            List.of("fp1"), List.of(), "test.ans", Map.of(), null);
+        ScittPreVerifyResult scittResult = ScittPreVerifyResult.verified(expectation, null, null);
+
+        PreVerificationResult result = new PreVerificationResult(
+            "test.com", 443, List.of(), false, null, List.of(), false, null, scittResult, Instant.now());
+
+        assertTrue(result.hasScittExpectation());
+        assertTrue(result.scittPreVerifySucceeded());
+        assertEquals(scittResult, result.scittPreVerifyResult());
     }
 }
