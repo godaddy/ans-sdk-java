@@ -29,7 +29,7 @@ dependencies {
     annotationProcessor("org.springframework.boot:spring-boot-configuration-processor:$springBootVersion")
 
     // MCP SDK (servlet transport)
-    implementation("io.modelcontextprotocol.sdk:mcp:1.1.0")
+    implementation("io.modelcontextprotocol.sdk:mcp:1.1.1")
 
     // ANS SDK - agent client includes transparency module transitively
     implementation(project(":ans-sdk-agent-client"))
