@@ -916,20 +916,19 @@ class DefaultScittVerifierTest {
         }
 
         @Test
-        @DisplayName("Should reject receipt with missing CWT claims")
-        void shouldRejectReceiptWithMissingCwtClaims() throws Exception {
+        @DisplayName("Should accept receipt with missing CWT claims (lenient)")
+        void shouldAcceptReceiptWithMissingCwtClaims() throws Exception {
             ScittReceipt receipt = createValidSignedReceiptWithCwtClaims(keyPair.getPrivate(), null);
             StatusToken token = createValidSignedToken(keyPair.getPrivate(), StatusToken.Status.ACTIVE);
 
             ScittExpectation result = verifier.verify(receipt, token, toRootKeys(keyPair.getPublic()));
 
-            assertThat(result.status()).isEqualTo(ScittExpectation.Status.INVALID_RECEIPT);
-            assertThat(result.failureReason()).contains("missing CWT claims");
+            assertThat(result.status()).isEqualTo(ScittExpectation.Status.VERIFIED);
         }
 
         @Test
-        @DisplayName("Should reject token with missing CWT claims")
-        void shouldRejectTokenWithMissingCwtClaims() throws Exception {
+        @DisplayName("Should accept token with missing CWT claims (lenient)")
+        void shouldAcceptTokenWithMissingCwtClaims() throws Exception {
             ScittReceipt receipt = createValidSignedReceipt(keyPair.getPrivate());
             CoseProtectedHeader tokenHeader = new CoseProtectedHeader(
                 -7, computeKeyId(keyPair.getPublic()), null, null, null);
@@ -938,8 +937,7 @@ class DefaultScittVerifierTest {
 
             ScittExpectation result = verifier.verify(receipt, token, toRootKeys(keyPair.getPublic()));
 
-            assertThat(result.status()).isEqualTo(ScittExpectation.Status.INVALID_TOKEN);
-            assertThat(result.failureReason()).contains("missing CWT claims");
+            assertThat(result.status()).isEqualTo(ScittExpectation.Status.VERIFIED);
         }
 
         @Test

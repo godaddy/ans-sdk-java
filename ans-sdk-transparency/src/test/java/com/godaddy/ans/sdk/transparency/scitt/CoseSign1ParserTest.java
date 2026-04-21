@@ -303,7 +303,7 @@ class CoseSign1ParserTest {
 
             CBORObject protectedHeader = CBORObject.NewMap();
             protectedHeader.Add(1, -7);  // alg = ES256
-            protectedHeader.Add(13, cwtClaims);  // cwt_claims
+            protectedHeader.Add(15, cwtClaims);  // cwt_claims
             byte[] protectedBytes = protectedHeader.EncodeToBytes();
 
             CBORObject array = CBORObject.NewArray();

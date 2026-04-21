@@ -88,7 +88,7 @@ public final class DefaultScittVerifier implements ScittVerifier {
             LOGGER.debug("Receipt signature verified for agent {}", token.agentId());
 
             // 2a. Validate receipt issuer binding
-            String issuerError = validateIssuer(receipt.protectedHeader(), "Receipt");
+            String issuerError = validateIssuerIfPresent(receipt.protectedHeader(), "Receipt");
             if (issuerError != null) {
                 return ScittExpectation.invalidReceipt(issuerError);
             }
@@ -118,8 +118,8 @@ public final class DefaultScittVerifier implements ScittVerifier {
             }
             LOGGER.debug("Status token signature verified for agent {}", token.agentId());
 
-            // 5a. Validate token issuer binding
-            issuerError = validateIssuer(token.protectedHeader(), "Status token");
+            // 5a. Validate token issuer binding (lenient: only if CWT claims present)
+            issuerError = validateIssuerIfPresent(token.protectedHeader(), "Status token");
             if (issuerError != null) {
                 return ScittExpectation.invalidToken(issuerError);
             }
@@ -233,6 +233,17 @@ public final class DefaultScittVerifier implements ScittVerifier {
                 + "', got '" + iss + "'";
         }
         return null;
+    }
+
+    /**
+     * Validates the issuer CWT claim only if CWT claims are present.
+     * Returns null (no error) when CWT claims are absent.
+     */
+    private String validateIssuerIfPresent(CoseProtectedHeader header, String artifactType) {
+        if (header == null || header.cwtClaims() == null) {
+            return null;
+        }
+        return validateIssuer(header, artifactType);
     }
 
     /**

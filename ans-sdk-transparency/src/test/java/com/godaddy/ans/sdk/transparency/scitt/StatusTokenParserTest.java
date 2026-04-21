@@ -619,7 +619,7 @@ class StatusTokenParserTest {
 
             CBORObject protectedHeaderMap = CBORObject.NewMap();
             protectedHeaderMap.Add(1, -7);     // alg = ES256
-            protectedHeaderMap.Add(13, cwtMap); // cwt_claims label
+            protectedHeaderMap.Add(15, cwtMap); // cwt_claims label
             byte[] protectedHeaderBytes = protectedHeaderMap.EncodeToBytes();
 
             CwtClaims cwtClaims = new CwtClaims(null, null, null, expSeconds, null, iatSeconds);

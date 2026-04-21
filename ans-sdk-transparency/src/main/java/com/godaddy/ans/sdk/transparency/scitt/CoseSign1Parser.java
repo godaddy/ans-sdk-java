@@ -168,9 +168,9 @@ public final class CoseSign1Parser {
             vds = vdsObject.AsInt32();
         }
 
-        // Extract CWT claims if present (label 13 for cwt_claims)
+        // Extract CWT claims if present (label 15 per draft-ietf-cose-cwt-claims-in-headers)
         CwtClaims cwtClaims = null;
-        CBORObject cwtObject = headerMap.get(CBORObject.FromObject(13));
+        CBORObject cwtObject = headerMap.get(CBORObject.FromObject(15));
         if (cwtObject != null && cwtObject.getType() == CBORType.Map) {
             cwtClaims = parseCwtClaims(cwtObject);
         }
