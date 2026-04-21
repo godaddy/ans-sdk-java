@@ -276,6 +276,159 @@ class CertificateUtilsTest {
     }
 
     @Test
+    @DisplayName("normalizeFingerprint should throw for null input")
+    void normalizeFingerprintShouldThrowForNullInput() {
+        assertThatThrownBy(() -> CertificateUtils.normalizeFingerprint(null))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("null");
+    }
+
+    @Test
+    @DisplayName("normalizeFingerprint should normalize various formats")
+    void normalizeFingerprintShouldNormalizeVariousFormats() {
+        String hex = "abcdef1234567890";
+
+        // Plain hex
+        assertThat(CertificateUtils.normalizeFingerprint(hex)).isEqualTo(hex);
+
+        // Uppercase
+        assertThat(CertificateUtils.normalizeFingerprint("ABCDEF1234567890")).isEqualTo(hex);
+
+        // With sha256: prefix
+        assertThat(CertificateUtils.normalizeFingerprint("sha256:" + hex)).isEqualTo(hex);
+        assertThat(CertificateUtils.normalizeFingerprint("SHA256:" + hex)).isEqualTo(hex);
+
+        // With sha-256: prefix
+        assertThat(CertificateUtils.normalizeFingerprint("sha-256:" + hex)).isEqualTo(hex);
+
+        // With colons
+        assertThat(CertificateUtils.normalizeFingerprint("ab:cd:ef:12:34:56:78:90")).isEqualTo(hex);
+
+        // With spaces
+        assertThat(CertificateUtils.normalizeFingerprint("ab cd ef 12 34 56 78 90")).isEqualTo(hex);
+
+        // With whitespace trim
+        assertThat(CertificateUtils.normalizeFingerprint("  " + hex + "  ")).isEqualTo(hex);
+    }
+
+    // ==================== bytesToHex / hexToBytes ====================
+
+    @Test
+    @DisplayName("bytesToHex should convert bytes to lowercase hex")
+    void bytesToHexShouldConvertBytesToLowercaseHex() {
+        byte[] bytes = {(byte) 0xDE, (byte) 0xAD, (byte) 0xBE, (byte) 0xEF};
+        assertThat(CertificateUtils.bytesToHex(bytes)).isEqualTo("deadbeef");
+    }
+
+    @Test
+    @DisplayName("bytesToHex should handle empty array")
+    void bytesToHexShouldHandleEmptyArray() {
+        assertThat(CertificateUtils.bytesToHex(new byte[0])).isEmpty();
+    }
+
+    @Test
+    @DisplayName("bytesToHex should throw for null input")
+    void bytesToHexShouldThrowForNullInput() {
+        assertThatThrownBy(() -> CertificateUtils.bytesToHex(null))
+            .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    @DisplayName("hexToBytes should convert hex string to bytes")
+    void hexToBytesShouldConvertHexStringToBytes() {
+        byte[] result = CertificateUtils.hexToBytes("deadbeef");
+        assertThat(result).containsExactly((byte) 0xDE, (byte) 0xAD, (byte) 0xBE, (byte) 0xEF);
+    }
+
+    @Test
+    @DisplayName("hexToBytes should handle empty string")
+    void hexToBytesShouldHandleEmptyString() {
+        assertThat(CertificateUtils.hexToBytes("")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("hexToBytes should throw for null input")
+    void hexToBytesShouldThrowForNullInput() {
+        assertThatThrownBy(() -> CertificateUtils.hexToBytes(null))
+            .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    @DisplayName("hexToBytes should throw for odd-length string")
+    void hexToBytesShouldThrowForOddLengthString() {
+        assertThatThrownBy(() -> CertificateUtils.hexToBytes("abc"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("even length");
+    }
+
+    @Test
+    @DisplayName("bytesToHex and hexToBytes should roundtrip")
+    void bytesToHexAndHexToBytesShouldRoundtrip() {
+        byte[] original = {0x01, 0x23, 0x45, 0x67, (byte) 0x89, (byte) 0xAB, (byte) 0xCD, (byte) 0xEF};
+        String hex = CertificateUtils.bytesToHex(original);
+        byte[] result = CertificateUtils.hexToBytes(hex);
+        assertThat(result).isEqualTo(original);
+    }
+
+    // ==================== truncateFingerprint ====================
+
+    @Test
+    @DisplayName("truncateFingerprint should truncate long fingerprints")
+    void truncateFingerprintShouldTruncateLongFingerprints() {
+        String longFp = "abcdef0123456789abcdef";
+        assertThat(CertificateUtils.truncateFingerprint(longFp)).isEqualTo("abcdef0123456789...");
+    }
+
+    @Test
+    @DisplayName("truncateFingerprint should return short fingerprints unchanged")
+    void truncateFingerprintShouldReturnShortFingerprintsUnchanged() {
+        String shortFp = "abcdef01234567";
+        assertThat(CertificateUtils.truncateFingerprint(shortFp)).isEqualTo(shortFp);
+    }
+
+    @Test
+    @DisplayName("truncateFingerprint should return exactly 16 chars unchanged")
+    void truncateFingerprintShouldReturnExactly16CharsUnchanged() {
+        String exactFp = "abcdef0123456789";
+        assertThat(CertificateUtils.truncateFingerprint(exactFp)).isEqualTo(exactFp);
+    }
+
+    @Test
+    @DisplayName("truncateFingerprint should return null for null input")
+    void truncateFingerprintShouldReturnNullForNullInput() {
+        assertThat(CertificateUtils.truncateFingerprint(null)).isNull();
+    }
+
+    // ==================== truncateFingerprints ====================
+
+    @Test
+    @DisplayName("truncateFingerprints should format small lists")
+    void truncateFingerprintsShouldFormatSmallLists() {
+        String result = CertificateUtils.truncateFingerprints(
+            List.of("abcdef0123456789abcdef", "1234567890abcdef1234"));
+        assertThat(result).contains("abcdef0123456789...");
+        assertThat(result).contains("1234567890abcdef...");
+    }
+
+    @Test
+    @DisplayName("truncateFingerprints should summarize large lists")
+    void truncateFingerprintsShouldSummarizeLargeLists() {
+        String result = CertificateUtils.truncateFingerprints(
+            List.of("abcdef0123456789abcdef", "1234567890abcdef1234", "deadbeef12345678dead"));
+        assertThat(result).contains("abcdef0123456789...");
+        assertThat(result).contains("3 total");
+    }
+
+    @Test
+    @DisplayName("truncateFingerprints should handle single element list")
+    void truncateFingerprintsShouldHandleSingleElementList() {
+        String result = CertificateUtils.truncateFingerprints(List.of("short"));
+        assertThat(result).contains("short");
+    }
+
+    // ==================== getDnsSubjectAltNames ====================
+
+    @Test
     @DisplayName("getDnsSubjectAltNames should return empty list for cert without SANs")
     void getDnsSubjectAltNamesShouldReturnEmptyListForCertWithoutSans() {
         List<String> sans = CertificateUtils.getDnsSubjectAltNames(validCertificate);

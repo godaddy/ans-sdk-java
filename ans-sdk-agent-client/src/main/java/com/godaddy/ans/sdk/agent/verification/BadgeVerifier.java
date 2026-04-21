@@ -28,7 +28,7 @@ import java.util.concurrent.Executor;
  *
  * <h2>Usage</h2>
  * <pre>{@code
- * ServerVerifier verificationService = BadgeVerificationService.create();
+ * ServerVerifier verificationService = BadgeVerificationService.create(transparencyClient);
  * BadgeVerifier verifier = new BadgeVerifier(verificationService);
  *
  * // Pre-verify (before TLS handshake)

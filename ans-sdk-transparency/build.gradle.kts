@@ -4,6 +4,9 @@ val junitVersion: String by project
 val mockitoVersion: String by project
 val assertjVersion: String by project
 val wiremockVersion: String by project
+val bouncyCastleVersion: String by project
+val caffeineVersion: String by project
+val cborVersion: String by project
 
 dependencies {
     // Core module for exceptions and HTTP utilities
@@ -21,6 +24,12 @@ dependencies {
 
     // dnsjava for _ra-badge TXT record lookups (JNDI doesn't support all TXT features)
     implementation("dnsjava:dnsjava:3.6.4")
+
+    // CBOR parsing for SCITT COSE_Sign1 structures
+    implementation("com.upokecenter:cbor:$cborVersion")
+
+    // Caffeine for high-performance caching with TTL and automatic eviction
+    implementation("com.github.ben-manes.caffeine:caffeine:$caffeineVersion")
 
     // Testing
     testImplementation("org.junit.jupiter:junit-jupiter:$junitVersion")

@@ -7,10 +7,13 @@ import org.junit.jupiter.api.Test;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Unit tests for {@link AnsExecutors}.
@@ -183,5 +186,159 @@ class AnsExecutorsTest {
         startLatch.countDown();
         assertThat(doneLatch.await(10, TimeUnit.SECONDS)).isTrue();
         assertThat(firstExecutor.get()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("newScheduledExecutor should create functional scheduled executor")
+    void newScheduledExecutorShouldCreateFunctionalExecutor() throws Exception {
+        ScheduledExecutorService scheduler = AnsExecutors.newScheduledExecutor(2);
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<String> threadName = new AtomicReference<>();
+
+        try {
+            scheduler.schedule(() -> {
+                threadName.set(Thread.currentThread().getName());
+                latch.countDown();
+            }, 10, TimeUnit.MILLISECONDS);
+
+            assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(threadName.get()).startsWith("ans-scheduled-");
+        } finally {
+            scheduler.shutdown();
+        }
+    }
+
+    @Test
+    @DisplayName("newScheduledExecutor threads should be daemon threads")
+    void newScheduledExecutorThreadsShouldBeDaemon() throws Exception {
+        ScheduledExecutorService scheduler = AnsExecutors.newScheduledExecutor(1);
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Boolean> isDaemon = new AtomicReference<>();
+
+        try {
+            scheduler.execute(() -> {
+                isDaemon.set(Thread.currentThread().isDaemon());
+                latch.countDown();
+            });
+
+            assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(isDaemon.get()).isTrue();
+        } finally {
+            scheduler.shutdown();
+        }
+    }
+
+    @Test
+    @DisplayName("newSingleThreadScheduledExecutor should create single-threaded executor")
+    void newSingleThreadScheduledExecutorShouldCreateSingleThreadedExecutor() throws Exception {
+        ScheduledExecutorService scheduler = AnsExecutors.newSingleThreadScheduledExecutor();
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<String> threadName = new AtomicReference<>();
+
+        try {
+            scheduler.schedule(() -> {
+                threadName.set(Thread.currentThread().getName());
+                latch.countDown();
+            }, 10, TimeUnit.MILLISECONDS);
+
+            assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(threadName.get()).startsWith("ans-scheduled-");
+        } finally {
+            scheduler.shutdown();
+        }
+    }
+
+    @Test
+    @DisplayName("newSingleThreadScheduledExecutor should be a daemon thread")
+    void newSingleThreadScheduledExecutorShouldBeDaemon() throws Exception {
+        ScheduledExecutorService scheduler = AnsExecutors.newSingleThreadScheduledExecutor();
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicReference<Boolean> isDaemon = new AtomicReference<>();
+
+        try {
+            scheduler.execute(() -> {
+                isDaemon.set(Thread.currentThread().isDaemon());
+                latch.countDown();
+            });
+
+            assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+            assertThat(isDaemon.get()).isTrue();
+        } finally {
+            scheduler.shutdown();
+        }
+    }
+
+    @Test
+    @DisplayName("newIoExecutor should reject tasks with custom message when pool and queue are saturated")
+    void newIoExecutorShouldRejectWhenSaturated() throws Exception {
+        // Create a 1-thread executor via AnsExecutors to exercise its custom rejection handler
+        ExecutorService executor = AnsExecutors.newIoExecutor(1);
+        CountDownLatch blockLatch = new CountDownLatch(1);
+
+        try {
+            // Occupy the single thread with a blocking task
+            executor.execute(() -> {
+                try {
+                    blockLatch.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+
+            // Fill the bounded queue (DEFAULT_QUEUE_CAPACITY = 500)
+            for (int i = 0; i < AnsExecutors.DEFAULT_QUEUE_CAPACITY; i++) {
+                executor.execute(() -> { });
+            }
+
+            // The next task should trigger AnsExecutors' custom rejection handler
+            assertThatThrownBy(() -> executor.execute(() -> { }))
+                .isInstanceOf(RejectedExecutionException.class)
+                .hasMessageContaining("ANS IO executor saturated");
+        } finally {
+            blockLatch.countDown();
+            executor.shutdown();
+        }
+    }
+
+    @Test
+    @DisplayName("shutdown should handle interruption during awaitTermination")
+    void shutdownShouldHandleInterruption() throws Exception {
+        // Initialize the shared executor with a long-running task
+        Executor executor = AnsExecutors.sharedIoExecutor();
+        CountDownLatch taskStarted = new CountDownLatch(1);
+        CountDownLatch blockLatch = new CountDownLatch(1);
+
+        executor.execute(() -> {
+            taskStarted.countDown();
+            try {
+                blockLatch.await();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+
+        // Wait for the task to start
+        assertThat(taskStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+        // Interrupt the current thread before calling shutdown
+        // This causes awaitTermination to throw InterruptedException
+        Thread.currentThread().interrupt();
+        AnsExecutors.shutdown();
+
+        // The executor should still be cleaned up
+        assertThat(AnsExecutors.isInitialized()).isFalse();
+
+        // The interrupt flag should be restored (re-set by the catch block)
+        assertThat(Thread.interrupted()).isTrue();
+
+        // Release the blocking task
+        blockLatch.countDown();
+    }
+
+    @Test
+    @DisplayName("DEFAULT_QUEUE_CAPACITY should be reasonable")
+    void defaultQueueCapacityShouldBeReasonable() {
+        assertThat(AnsExecutors.DEFAULT_QUEUE_CAPACITY).isGreaterThanOrEqualTo(50);
+        assertThat(AnsExecutors.DEFAULT_QUEUE_CAPACITY).isLessThanOrEqualTo(1000);
     }
 }

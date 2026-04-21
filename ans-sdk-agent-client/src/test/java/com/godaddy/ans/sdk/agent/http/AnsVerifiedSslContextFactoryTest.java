@@ -1,6 +1,5 @@
 package com.godaddy.ans.sdk.agent.http;
 
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import javax.net.ssl.SSLContext;
@@ -12,11 +11,6 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Tests for {@link AnsVerifiedSslContextFactory}.
  */
 class AnsVerifiedSslContextFactoryTest {
-
-    @AfterEach
-    void tearDown() {
-        CertificateCapturingTrustManager.clearCapturedCertificates();
-    }
 
     @Test
     void createReturnsValidSslContext() throws Exception {

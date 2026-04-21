@@ -25,7 +25,9 @@ import java.security.KeyStore;
  *
  * <h2>Usage with MCP SDK</h2>
  * <pre>{@code
- * SSLContext sslContext = AnsVerifiedSslContextFactory.create();
+ * SslContextResult result = AnsVerifiedSslContextFactory.createWithTrustManager(keyStore, password);
+ * SSLContext sslContext = result.sslContext();
+ * CertificateCapturingTrustManager trustManager = result.trustManager();
  *
  * HttpClientStreamableHttpTransport transport = HttpClientStreamableHttpTransport
  *     .builder(serverUrl)
@@ -33,12 +35,14 @@ import java.security.KeyStore;
  *     .build();
  *
  * // After TLS handshake, retrieve captured certificate for verification
- * X509Certificate[] certs = CertificateCapturingTrustManager.getCapturedCertificates(hostname);
+ * X509Certificate[] certs = trustManager.getInstanceCapturedCertificates(hostname);
  * }</pre>
  *
  * <h2>Usage with Standard HttpClient</h2>
  * <pre>{@code
- * SSLContext sslContext = AnsVerifiedSslContextFactory.create();
+ * SslContextResult result = AnsVerifiedSslContextFactory.createWithTrustManager(keyStore, password);
+ * SSLContext sslContext = result.sslContext();
+ * CertificateCapturingTrustManager trustManager = result.trustManager();
  *
  * HttpClient httpClient = HttpClient.newBuilder()
  *     .sslContext(sslContext)
@@ -46,7 +50,7 @@ import java.security.KeyStore;
  *     .build();
  *
  * // Make request, then retrieve captured certificate
- * X509Certificate[] certs = CertificateCapturingTrustManager.getCapturedCertificates(hostname);
+ * X509Certificate[] certs = trustManager.getInstanceCapturedCertificates(hostname);
  * }</pre>
  *
  * @see CertificateCapturingTrustManager
@@ -56,6 +60,14 @@ public final class AnsVerifiedSslContextFactory {
     private AnsVerifiedSslContextFactory() {
         // No instantiation
     }
+
+    /**
+     * Result of creating an SSLContext, including access to the trust manager instance.
+     *
+     * @param sslContext the configured SSLContext
+     * @param trustManager the capturing trust manager for instance-scoped certificate retrieval
+     */
+    public record SslContextResult(SSLContext sslContext, CertificateCapturingTrustManager trustManager) { }
 
     /**
      * Creates an SSLContext with certificate capture for ANS verification.
@@ -108,6 +120,36 @@ public final class AnsVerifiedSslContextFactory {
         sslContext.init(keyManagers, new TrustManager[]{capturingTm}, null);
 
         return sslContext;
+    }
+
+    /**
+     * Creates an SSLContext with certificate capture, returning both the context
+     * and the trust manager instance for instance-scoped certificate retrieval.
+     *
+     * @param clientKeyStore the KeyStore containing the client certificate, or null
+     * @param keyPassword the password for the private key, or null
+     * @return the SSLContext and trust manager instance
+     * @throws GeneralSecurityException if SSL initialization fails
+     */
+    public static SslContextResult createWithTrustManager(KeyStore clientKeyStore, char[] keyPassword)
+            throws GeneralSecurityException {
+
+        X509TrustManager systemTrustManager = getSystemTrustManager();
+        CertificateCapturingTrustManager capturingTm =
+                new CertificateCapturingTrustManager(systemTrustManager);
+
+        KeyManager[] keyManagers = null;
+        if (clientKeyStore != null) {
+            KeyManagerFactory kmf = KeyManagerFactory.getInstance(
+                    KeyManagerFactory.getDefaultAlgorithm());
+            kmf.init(clientKeyStore, keyPassword);
+            keyManagers = kmf.getKeyManagers();
+        }
+
+        SSLContext sslContext = SSLContext.getInstance("TLS");
+        sslContext.init(keyManagers, new TrustManager[]{capturingTm}, null);
+
+        return new SslContextResult(sslContext, capturingTm);
     }
 
     /**

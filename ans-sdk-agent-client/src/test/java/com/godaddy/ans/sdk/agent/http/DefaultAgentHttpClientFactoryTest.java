@@ -3,6 +3,7 @@ package com.godaddy.ans.sdk.agent.http;
 import com.godaddy.ans.sdk.agent.ConnectOptions;
 import com.godaddy.ans.sdk.agent.VerificationMode;
 import com.godaddy.ans.sdk.agent.VerificationPolicy;
+import com.godaddy.ans.sdk.agent.exception.AgentConnectionException;
 import com.godaddy.ans.sdk.agent.verification.DaneTlsaVerifier;
 import com.godaddy.ans.sdk.transparency.TransparencyClient;
 import org.bouncycastle.asn1.x500.X500Name;
@@ -27,9 +28,12 @@ import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.util.Date;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * Tests for DefaultAgentHttpClientFactory.
@@ -128,11 +132,26 @@ class DefaultAgentHttpClientFactoryTest {
     }
 
     @Test
-    void createVerifiedWithBadgeRequired() {
-        // Tests the badge verification creation path
+    void createVerifiedWithBadgeRequiredThrowsWithoutTransparencyClient() {
+        // Badge verification requires an explicit TransparencyClient
         DefaultAgentHttpClientFactory factory = new DefaultAgentHttpClientFactory();
         ConnectOptions options = ConnectOptions.builder()
             .verificationPolicy(VerificationPolicy.BADGE_REQUIRED)
+            .build();
+
+        AgentConnectionException thrown = assertThrows(AgentConnectionException.class, () ->
+            factory.createVerified("example.com", options, Duration.ofSeconds(10)));
+        assertTrue(thrown.getCause() instanceof IllegalStateException);
+    }
+
+    @Test
+    void createVerifiedWithBadgeRequiredAndTransparencyClient() {
+        // Badge verification works when TransparencyClient is provided
+        DefaultAgentHttpClientFactory factory = new DefaultAgentHttpClientFactory();
+        TransparencyClient mockTransparencyClient = mock(TransparencyClient.class);
+        ConnectOptions options = ConnectOptions.builder()
+            .verificationPolicy(VerificationPolicy.BADGE_REQUIRED)
+            .transparencyClient(mockTransparencyClient)
             .build();
 
         VerifiedClientResult result = factory.createVerified(
@@ -147,12 +166,14 @@ class DefaultAgentHttpClientFactoryTest {
     void createVerifiedWithBothDaneAndBadgeEnabled() {
         // Tests creating verifiers for both DANE and Badge
         DefaultAgentHttpClientFactory factory = new DefaultAgentHttpClientFactory();
+        TransparencyClient mockTransparencyClient = mock(TransparencyClient.class);
         VerificationPolicy policy = VerificationPolicy.custom()
             .dane(VerificationMode.REQUIRED)
             .badge(VerificationMode.ADVISORY)
             .build();
         ConnectOptions options = ConnectOptions.builder()
             .verificationPolicy(policy)
+            .transparencyClient(mockTransparencyClient)
             .build();
 
         VerifiedClientResult result = factory.createVerified(
@@ -181,23 +202,25 @@ class DefaultAgentHttpClientFactoryTest {
 
     @Test
     void createVerifiedReusesVerificationService() {
-        // Tests that the cached verification service is reused across calls
+        // Tests that badge verification works across multiple calls with same client
         DefaultAgentHttpClientFactory factory = new DefaultAgentHttpClientFactory();
+        TransparencyClient mockTransparencyClient = mock(TransparencyClient.class);
         ConnectOptions options = ConnectOptions.builder()
             .verificationPolicy(VerificationPolicy.BADGE_REQUIRED)
+            .transparencyClient(mockTransparencyClient)
             .build();
 
         // First call creates the verification service
         VerifiedClientResult result1 = factory.createVerified(
             "example.com", options, Duration.ofSeconds(10));
 
-        // Second call should reuse the cached service
+        // Second call should also succeed
         VerifiedClientResult result2 = factory.createVerified(
             "example.org", options, Duration.ofSeconds(10));
 
         assertNotNull(result1);
         assertNotNull(result2);
-        // Both should have verifiers (service is shared internally)
+        // Both should have verifiers
         assertNotNull(result1.verifier());
         assertNotNull(result2.verifier());
     }
@@ -206,12 +229,14 @@ class DefaultAgentHttpClientFactoryTest {
     void createVerifiedWithAdvisoryModes() {
         // Tests creating with advisory modes
         DefaultAgentHttpClientFactory factory = new DefaultAgentHttpClientFactory();
+        TransparencyClient mockTransparencyClient = mock(TransparencyClient.class);
         VerificationPolicy policy = VerificationPolicy.custom()
             .dane(VerificationMode.ADVISORY)
             .badge(VerificationMode.ADVISORY)
             .build();
         ConnectOptions options = ConnectOptions.builder()
             .verificationPolicy(policy)
+            .transparencyClient(mockTransparencyClient)
             .build();
 
         VerifiedClientResult result = factory.createVerified(
@@ -224,12 +249,14 @@ class DefaultAgentHttpClientFactoryTest {
     void createVerifiedWithDisabledDane() {
         // Tests that DANE verifier is NOT added when disabled
         DefaultAgentHttpClientFactory factory = new DefaultAgentHttpClientFactory();
+        TransparencyClient mockTransparencyClient = mock(TransparencyClient.class);
         VerificationPolicy policy = VerificationPolicy.custom()
             .dane(VerificationMode.DISABLED)
             .badge(VerificationMode.REQUIRED)
             .build();
         ConnectOptions options = ConnectOptions.builder()
             .verificationPolicy(policy)
+            .transparencyClient(mockTransparencyClient)
             .build();
 
         VerifiedClientResult result = factory.createVerified(
@@ -270,6 +297,24 @@ class DefaultAgentHttpClientFactoryTest {
 
         assertNotNull(client);
         // Should be a raw HttpClient, not AnsHttpClient
+    }
+
+    @Test
+    void createVerifiedWiresCertProviderIntoAnsHttpClient() {
+        // Regression test: certProvider must be wired into AnsHttpClient
+        // so that post-handshake certificate verification can run.
+        DefaultAgentHttpClientFactory factory = new DefaultAgentHttpClientFactory();
+        ConnectOptions options = ConnectOptions.builder()
+            .verificationPolicy(VerificationPolicy.PKI_ONLY)
+            .build();
+
+        VerifiedClientResult result = factory.createVerified(
+            "example.com", options, Duration.ofSeconds(10));
+
+        assertNotNull(result.ansHttpClient());
+        assertThat(result.ansHttpClient().hasCertProvider())
+            .as("certProvider must be wired for post-handshake verification")
+            .isTrue();
     }
 
     // ==================== mTLS Client Certificate Tests ====================
@@ -337,12 +382,14 @@ class DefaultAgentHttpClientFactoryTest {
     void createVerifiedWithMtlsAndBadgeVerification() throws Exception {
         // Tests mTLS combined with Badge verification
         DefaultAgentHttpClientFactory factory = new DefaultAgentHttpClientFactory();
+        TransparencyClient mockTransparencyClient = mock(TransparencyClient.class);
 
         KeyPair keyPair = generateTestKeyPair();
         X509Certificate cert = createTestCertificate("CN=TestClient", keyPair);
 
         ConnectOptions options = ConnectOptions.builder()
             .verificationPolicy(VerificationPolicy.BADGE_REQUIRED)
+            .transparencyClient(mockTransparencyClient)
             .clientCertificate(cert, keyPair.getPrivate())
             .build();
 
@@ -353,15 +400,17 @@ class DefaultAgentHttpClientFactoryTest {
     }
 
     @Test
-    void createVerifiedWithMtlsAndFullVerification() throws Exception {
+    void createVerifiedWithMtlsAndDaneAndBadgeVerification() throws Exception {
         // Tests mTLS combined with both DANE and Badge verification
         DefaultAgentHttpClientFactory factory = new DefaultAgentHttpClientFactory();
+        TransparencyClient mockTransparencyClient = mock(TransparencyClient.class);
 
         KeyPair keyPair = generateTestKeyPair();
         X509Certificate cert = createTestCertificate("CN=TestClient", keyPair);
 
         ConnectOptions options = ConnectOptions.builder()
-            .verificationPolicy(VerificationPolicy.FULL)
+            .verificationPolicy(VerificationPolicy.DANE_AND_BADGE)
+            .transparencyClient(mockTransparencyClient)
             .clientCertificate(cert, keyPair.getPrivate())
             .build();
 
@@ -435,6 +484,45 @@ class DefaultAgentHttpClientFactoryTest {
             "example.com", options, Duration.ofSeconds(10));
 
         assertNotNull(result);
+    }
+
+    // ==================== SCITT support (previously missing) ====================
+
+    @Test
+    void createVerifiedWithScittRequired() {
+        // Verifies SCITT policies are no longer silently ignored
+        DefaultAgentHttpClientFactory factory = new DefaultAgentHttpClientFactory();
+        TransparencyClient mockTransparencyClient = mock(TransparencyClient.class);
+        when(mockTransparencyClient.getBaseUrl()).thenReturn("https://transparency.test.example.com");
+
+        ConnectOptions options = ConnectOptions.builder()
+            .verificationPolicy(VerificationPolicy.SCITT_REQUIRED)
+            .transparencyClient(mockTransparencyClient)
+            .build();
+
+        VerifiedClientResult result = factory.createVerified(
+            "example.com", options, Duration.ofSeconds(10));
+
+        assertNotNull(result);
+        assertNotNull(result.verifier());
+    }
+
+    @Test
+    void createVerifiedWithScittEnhanced() {
+        DefaultAgentHttpClientFactory factory = new DefaultAgentHttpClientFactory();
+        TransparencyClient mockTransparencyClient = mock(TransparencyClient.class);
+        when(mockTransparencyClient.getBaseUrl()).thenReturn("https://transparency.test.example.com");
+
+        ConnectOptions options = ConnectOptions.builder()
+            .verificationPolicy(VerificationPolicy.SCITT_ENHANCED)
+            .transparencyClient(mockTransparencyClient)
+            .build();
+
+        VerifiedClientResult result = factory.createVerified(
+            "example.com", options, Duration.ofSeconds(10));
+
+        assertNotNull(result);
+        assertNotNull(result.verifier());
     }
 
     // ==================== Helper Methods ====================

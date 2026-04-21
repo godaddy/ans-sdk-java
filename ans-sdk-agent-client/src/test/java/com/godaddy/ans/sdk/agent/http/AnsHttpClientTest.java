@@ -5,10 +5,8 @@ import com.godaddy.ans.sdk.agent.exception.VerificationException;
 import com.godaddy.ans.sdk.agent.verification.ConnectionVerifier;
 import com.godaddy.ans.sdk.agent.verification.PreVerificationResult;
 import com.godaddy.ans.sdk.agent.verification.VerificationResult;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.MockedStatic;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -30,7 +28,8 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -40,19 +39,13 @@ class AnsHttpClientTest {
 
     private HttpClient mockHttpClient;
     private ConnectionVerifier mockVerifier;
-    private MockedStatic<CertificateCapturingTrustManager> mockedStatic;
+    private CapturedCertificateProvider mockCertProvider;
 
     @BeforeEach
     void setUp() {
         mockHttpClient = mock(HttpClient.class);
         mockVerifier = mock(ConnectionVerifier.class);
-    }
-
-    @AfterEach
-    void tearDown() {
-        if (mockedStatic != null) {
-            mockedStatic.close();
-        }
+        mockCertProvider = mock(CapturedCertificateProvider.class);
     }
 
     @Test
@@ -152,6 +145,7 @@ class AnsHttpClientTest {
         assertSame(builder, builder.connectionVerifier(mockVerifier));
         assertSame(builder, builder.verificationPolicy(VerificationPolicy.PKI_ONLY));
         assertSame(builder, builder.preVerifyTimeout(Duration.ofSeconds(5)));
+        assertSame(builder, builder.certProvider(mockCertProvider));
     }
 
     @Test
@@ -163,13 +157,10 @@ class AnsHttpClientTest {
     @Test
     @SuppressWarnings("unchecked")
     void sendWithVerificationSuccessShouldReturnResponse() throws Exception {
-        // Setup mocks
-        mockedStatic = mockStatic(CertificateCapturingTrustManager.class);
         X509Certificate mockCert = mock(X509Certificate.class);
         X509Certificate[] certs = new X509Certificate[]{mockCert};
 
-        mockedStatic.when(() -> CertificateCapturingTrustManager.getCapturedCertificates("example.com"))
-            .thenReturn(certs);
+        when(mockCertProvider.getCapturedCertificates("example.com")).thenReturn(certs);
 
         HttpResponse<String> mockResponse = mock(HttpResponse.class);
         when(mockResponse.body()).thenReturn("success");
@@ -191,30 +182,27 @@ class AnsHttpClientTest {
             .delegate(mockHttpClient)
             .connectionVerifier(mockVerifier)
             .verificationPolicy(VerificationPolicy.DANE_REQUIRED)
+            .certProvider(mockCertProvider)
             .build();
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create("https://example.com/api"))
             .build();
 
-        // Execute
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
 
-        // Verify
         assertNotNull(response);
         assertEquals("success", response.body());
+        verify(mockCertProvider).clearCapturedCertificates("example.com");
     }
 
     @Test
     @SuppressWarnings("unchecked")
     void sendWithVerificationFailureShouldThrowException() throws Exception {
-        // Setup mocks
-        mockedStatic = mockStatic(CertificateCapturingTrustManager.class);
         X509Certificate mockCert = mock(X509Certificate.class);
         X509Certificate[] certs = new X509Certificate[]{mockCert};
 
-        mockedStatic.when(() -> CertificateCapturingTrustManager.getCapturedCertificates("example.com"))
-            .thenReturn(certs);
+        when(mockCertProvider.getCapturedCertificates("example.com")).thenReturn(certs);
 
         HttpResponse<String> mockResponse = mock(HttpResponse.class);
         when(mockHttpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
@@ -224,7 +212,6 @@ class AnsHttpClientTest {
         when(mockVerifier.preVerify(anyString(), anyInt()))
             .thenReturn(CompletableFuture.completedFuture(preResult));
 
-        // Mismatch will trigger retry, so both calls return mismatch
         VerificationResult failResult = VerificationResult.mismatch(
             VerificationResult.VerificationType.DANE, "actual", "expected");
         when(mockVerifier.postVerify(anyString(), any(), any()))
@@ -236,28 +223,23 @@ class AnsHttpClientTest {
             .delegate(mockHttpClient)
             .connectionVerifier(mockVerifier)
             .verificationPolicy(VerificationPolicy.DANE_REQUIRED)
+            .certProvider(mockCertProvider)
             .build();
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create("https://example.com/api"))
             .build();
 
-        // Execute and verify - should throw after retry also fails
         assertThrows(VerificationException.class, () ->
             client.send(request, HttpResponse.BodyHandlers.ofString()));
 
-        // preVerify called twice due to retry on mismatch
-        org.mockito.Mockito.verify(mockVerifier, org.mockito.Mockito.times(2))
-            .preVerify("example.com", 443);
+        verify(mockVerifier, times(2)).preVerify("example.com", 443);
     }
 
     @Test
     @SuppressWarnings("unchecked")
     void sendWithNoCapturedCertificatesShouldThrowWhenVerificationRequired() throws Exception {
-        // Setup mocks
-        mockedStatic = mockStatic(CertificateCapturingTrustManager.class);
-        mockedStatic.when(() -> CertificateCapturingTrustManager.getCapturedCertificates("example.com"))
-            .thenReturn(null);
+        when(mockCertProvider.getCapturedCertificates("example.com")).thenReturn(null);
 
         HttpResponse<String> mockResponse = mock(HttpResponse.class);
         when(mockHttpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
@@ -271,13 +253,13 @@ class AnsHttpClientTest {
             .delegate(mockHttpClient)
             .connectionVerifier(mockVerifier)
             .verificationPolicy(VerificationPolicy.DANE_REQUIRED)
+            .certProvider(mockCertProvider)
             .build();
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create("https://example.com/api"))
             .build();
 
-        // Execute and verify
         assertThrows(VerificationException.class, () ->
             client.send(request, HttpResponse.BodyHandlers.ofString()));
     }
@@ -285,10 +267,7 @@ class AnsHttpClientTest {
     @Test
     @SuppressWarnings("unchecked")
     void sendWithNoCertificatesAndPkiOnlyShouldSucceed() throws Exception {
-        // Setup mocks
-        mockedStatic = mockStatic(CertificateCapturingTrustManager.class);
-        mockedStatic.when(() -> CertificateCapturingTrustManager.getCapturedCertificates("example.com"))
-            .thenReturn(null);
+        when(mockCertProvider.getCapturedCertificates("example.com")).thenReturn(null);
 
         HttpResponse<String> mockResponse = mock(HttpResponse.class);
         when(mockResponse.body()).thenReturn("success");
@@ -303,23 +282,21 @@ class AnsHttpClientTest {
             .delegate(mockHttpClient)
             .connectionVerifier(mockVerifier)
             .verificationPolicy(VerificationPolicy.PKI_ONLY)
+            .certProvider(mockCertProvider)
             .build();
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create("https://example.com/api"))
             .build();
 
-        // Execute
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
 
-        // Verify
         assertNotNull(response);
     }
 
     @Test
     @SuppressWarnings("unchecked")
     void sendWithBadgePreVerificationFailedShouldThrowWhenRequired() throws Exception {
-        // Setup mocks
         PreVerificationResult preResult = PreVerificationResult.builder("example.com", 443)
             .badgePreVerifyFailed("Certificate revoked")
             .build();
@@ -330,13 +307,13 @@ class AnsHttpClientTest {
             .delegate(mockHttpClient)
             .connectionVerifier(mockVerifier)
             .verificationPolicy(VerificationPolicy.BADGE_REQUIRED)
+            .certProvider(mockCertProvider)
             .build();
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create("https://example.com/api"))
             .build();
 
-        // Execute and verify
         VerificationException ex = assertThrows(VerificationException.class, () ->
             client.send(request, HttpResponse.BodyHandlers.ofString()));
         assertTrue(ex.getMessage().contains("BADGE"));
@@ -345,13 +322,10 @@ class AnsHttpClientTest {
     @Test
     @SuppressWarnings("unchecked")
     void sendAsyncWithVerificationSuccessShouldReturnResponse() throws Exception {
-        // Setup mocks
-        mockedStatic = mockStatic(CertificateCapturingTrustManager.class);
         X509Certificate mockCert = mock(X509Certificate.class);
         X509Certificate[] certs = new X509Certificate[]{mockCert};
 
-        mockedStatic.when(() -> CertificateCapturingTrustManager.getCapturedCertificates("example.com"))
-            .thenReturn(certs);
+        when(mockCertProvider.getCapturedCertificates("example.com")).thenReturn(certs);
 
         HttpResponse<String> mockResponse = mock(HttpResponse.class);
         when(mockResponse.body()).thenReturn("async success");
@@ -373,23 +347,21 @@ class AnsHttpClientTest {
             .delegate(mockHttpClient)
             .connectionVerifier(mockVerifier)
             .verificationPolicy(VerificationPolicy.BADGE_REQUIRED)
+            .certProvider(mockCertProvider)
             .build();
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create("https://example.com/api"))
             .build();
 
-        // Execute
         HttpResponse<String> response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).get();
 
-        // Verify
         assertNotNull(response);
         assertEquals("async success", response.body());
     }
 
     @Test
     void sendAsyncWithBadgePreVerificationFailedShouldFail() {
-        // Setup mocks
         PreVerificationResult preResult = PreVerificationResult.builder("example.com", 443)
             .badgePreVerifyFailed("Expired registration")
             .build();
@@ -400,13 +372,13 @@ class AnsHttpClientTest {
             .delegate(mockHttpClient)
             .connectionVerifier(mockVerifier)
             .verificationPolicy(VerificationPolicy.BADGE_REQUIRED)
+            .certProvider(mockCertProvider)
             .build();
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create("https://example.com/api"))
             .build();
 
-        // Execute and verify
         CompletableFuture<HttpResponse<String>> future =
             client.sendAsync(request, HttpResponse.BodyHandlers.ofString());
 
@@ -416,13 +388,10 @@ class AnsHttpClientTest {
 
     @Test
     void sendWithCustomPortShouldUseCorrectPort() throws Exception {
-        // Setup mocks
-        mockedStatic = mockStatic(CertificateCapturingTrustManager.class);
         X509Certificate mockCert = mock(X509Certificate.class);
         X509Certificate[] certs = new X509Certificate[]{mockCert};
 
-        mockedStatic.when(() -> CertificateCapturingTrustManager.getCapturedCertificates("example.com"))
-            .thenReturn(certs);
+        when(mockCertProvider.getCapturedCertificates("example.com")).thenReturn(certs);
 
         HttpResponse<String> mockResponse = mock(HttpResponse.class);
         when(mockHttpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
@@ -442,16 +411,15 @@ class AnsHttpClientTest {
             .delegate(mockHttpClient)
             .connectionVerifier(mockVerifier)
             .verificationPolicy(VerificationPolicy.PKI_ONLY)
+            .certProvider(mockCertProvider)
             .build();
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create("https://example.com:8443/api"))
             .build();
 
-        // Execute
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
 
-        // Verify
         assertNotNull(response);
     }
 
@@ -495,13 +463,10 @@ class AnsHttpClientTest {
 
     @Test
     void preVerifyCacheIsUsedOnSubsequentCalls() throws Exception {
-        // Setup mocks
-        mockedStatic = mockStatic(CertificateCapturingTrustManager.class);
         X509Certificate mockCert = mock(X509Certificate.class);
         X509Certificate[] certs = new X509Certificate[]{mockCert};
 
-        mockedStatic.when(() -> CertificateCapturingTrustManager.getCapturedCertificates("example.com"))
-            .thenReturn(certs);
+        when(mockCertProvider.getCapturedCertificates("example.com")).thenReturn(certs);
 
         HttpResponse<String> mockResponse = mock(HttpResponse.class);
         when(mockHttpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
@@ -521,31 +486,25 @@ class AnsHttpClientTest {
             .delegate(mockHttpClient)
             .connectionVerifier(mockVerifier)
             .verificationPolicy(VerificationPolicy.PKI_ONLY)
+            .certProvider(mockCertProvider)
             .build();
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create("https://example.com/api"))
             .build();
 
-        // First call
         client.send(request, HttpResponse.BodyHandlers.ofString());
-        // Second call - should use cache
         client.send(request, HttpResponse.BodyHandlers.ofString());
 
-        // Verify preVerify was only called once (cache was used for second call)
-        org.mockito.Mockito.verify(mockVerifier, org.mockito.Mockito.times(1))
-            .preVerify("example.com", 443);
+        verify(mockVerifier, times(1)).preVerify("example.com", 443);
     }
 
     @Test
     void clearCacheAllowsNewPreVerification() throws Exception {
-        // Setup mocks
-        mockedStatic = mockStatic(CertificateCapturingTrustManager.class);
         X509Certificate mockCert = mock(X509Certificate.class);
         X509Certificate[] certs = new X509Certificate[]{mockCert};
 
-        mockedStatic.when(() -> CertificateCapturingTrustManager.getCapturedCertificates("example.com"))
-            .thenReturn(certs);
+        when(mockCertProvider.getCapturedCertificates("example.com")).thenReturn(certs);
 
         HttpResponse<String> mockResponse = mock(HttpResponse.class);
         when(mockHttpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
@@ -565,35 +524,26 @@ class AnsHttpClientTest {
             .delegate(mockHttpClient)
             .connectionVerifier(mockVerifier)
             .verificationPolicy(VerificationPolicy.PKI_ONLY)
+            .certProvider(mockCertProvider)
             .build();
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create("https://example.com/api"))
             .build();
 
-        // First call
         client.send(request, HttpResponse.BodyHandlers.ofString());
-
-        // Clear cache
         client.clearCache();
-
-        // Second call after cache clear - should call preVerify again
         client.send(request, HttpResponse.BodyHandlers.ofString());
 
-        // Verify preVerify was called twice (once before cache clear, once after)
-        org.mockito.Mockito.verify(mockVerifier, org.mockito.Mockito.times(2))
-            .preVerify("example.com", 443);
+        verify(mockVerifier, times(2)).preVerify("example.com", 443);
     }
 
     @Test
     void invalidateCacheForSpecificHostAllowsNewPreVerification() throws Exception {
-        // Setup mocks
-        mockedStatic = mockStatic(CertificateCapturingTrustManager.class);
         X509Certificate mockCert = mock(X509Certificate.class);
         X509Certificate[] certs = new X509Certificate[]{mockCert};
 
-        mockedStatic.when(() -> CertificateCapturingTrustManager.getCapturedCertificates("example.com"))
-            .thenReturn(certs);
+        when(mockCertProvider.getCapturedCertificates("example.com")).thenReturn(certs);
 
         HttpResponse<String> mockResponse = mock(HttpResponse.class);
         when(mockHttpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
@@ -613,43 +563,32 @@ class AnsHttpClientTest {
             .delegate(mockHttpClient)
             .connectionVerifier(mockVerifier)
             .verificationPolicy(VerificationPolicy.PKI_ONLY)
+            .certProvider(mockCertProvider)
             .build();
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create("https://example.com/api"))
             .build();
 
-        // First call
         client.send(request, HttpResponse.BodyHandlers.ofString());
-
-        // Invalidate cache for this specific host
         client.invalidateCache("example.com", 443);
-
-        // Second call after invalidation - should call preVerify again
         client.send(request, HttpResponse.BodyHandlers.ofString());
 
-        // Verify preVerify was called twice
-        org.mockito.Mockito.verify(mockVerifier, org.mockito.Mockito.times(2))
-            .preVerify("example.com", 443);
+        verify(mockVerifier, times(2)).preVerify("example.com", 443);
     }
 
     @Test
     @SuppressWarnings("unchecked")
     void sendAsyncWithPreVerificationTimeoutFallsBackToEmptyResult() throws Exception {
-        // Setup: preVerify returns a future that times out
         CompletableFuture<PreVerificationResult> slowFuture = new CompletableFuture<>();
-        // Never complete it - it will timeout
 
         when(mockVerifier.preVerify(anyString(), anyInt()))
             .thenReturn(slowFuture);
 
-        // Setup response for after timeout fallback
-        mockedStatic = mockStatic(CertificateCapturingTrustManager.class);
         X509Certificate mockCert = mock(X509Certificate.class);
         X509Certificate[] certs = new X509Certificate[]{mockCert};
 
-        mockedStatic.when(() -> CertificateCapturingTrustManager.getCapturedCertificates("example.com"))
-            .thenReturn(certs);
+        when(mockCertProvider.getCapturedCertificates("example.com")).thenReturn(certs);
 
         HttpResponse<String> mockResponse = mock(HttpResponse.class);
         when(mockResponse.body()).thenReturn("success");
@@ -666,17 +605,16 @@ class AnsHttpClientTest {
             .delegate(mockHttpClient)
             .connectionVerifier(mockVerifier)
             .verificationPolicy(VerificationPolicy.PKI_ONLY)
-            .preVerifyTimeout(Duration.ofMillis(100)) // Very short timeout
+            .certProvider(mockCertProvider)
+            .preVerifyTimeout(Duration.ofMillis(100))
             .build();
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create("https://example.com/api"))
             .build();
 
-        // Execute - should complete even though preVerify times out (PKI_ONLY policy)
         HttpResponse<String> response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).get();
 
-        // Verify - should fall back to empty pre-verification and succeed with PKI_ONLY
         assertNotNull(response);
         assertEquals("success", response.body());
     }
@@ -684,10 +622,7 @@ class AnsHttpClientTest {
     @Test
     @SuppressWarnings("unchecked")
     void sendAsyncWithNoCapturedCertificatesShouldFailWhenRequired() {
-        // Setup mocks - pre-verification succeeds
-        mockedStatic = mockStatic(CertificateCapturingTrustManager.class);
-        mockedStatic.when(() -> CertificateCapturingTrustManager.getCapturedCertificates("example.com"))
-            .thenReturn(null);
+        when(mockCertProvider.getCapturedCertificates("example.com")).thenReturn(null);
 
         HttpResponse<String> mockResponse = mock(HttpResponse.class);
         when(mockHttpClient.sendAsync(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
@@ -700,14 +635,14 @@ class AnsHttpClientTest {
         AnsHttpClient client = AnsHttpClient.builder()
             .delegate(mockHttpClient)
             .connectionVerifier(mockVerifier)
-            .verificationPolicy(VerificationPolicy.DANE_REQUIRED) // Requires verification
+            .verificationPolicy(VerificationPolicy.DANE_REQUIRED)
+            .certProvider(mockCertProvider)
             .build();
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create("https://example.com/api"))
             .build();
 
-        // Execute and verify
         CompletableFuture<HttpResponse<String>> future =
             client.sendAsync(request, HttpResponse.BodyHandlers.ofString());
 
@@ -719,13 +654,10 @@ class AnsHttpClientTest {
     @Test
     @SuppressWarnings("unchecked")
     void sendAsyncWithVerificationFailureShouldThrowException() {
-        // Setup mocks
-        mockedStatic = mockStatic(CertificateCapturingTrustManager.class);
         X509Certificate mockCert = mock(X509Certificate.class);
         X509Certificate[] certs = new X509Certificate[]{mockCert};
 
-        mockedStatic.when(() -> CertificateCapturingTrustManager.getCapturedCertificates("example.com"))
-            .thenReturn(certs);
+        when(mockCertProvider.getCapturedCertificates("example.com")).thenReturn(certs);
 
         HttpResponse<String> mockResponse = mock(HttpResponse.class);
         when(mockHttpClient.sendAsync(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
@@ -735,7 +667,6 @@ class AnsHttpClientTest {
         when(mockVerifier.preVerify(anyString(), anyInt()))
             .thenReturn(CompletableFuture.completedFuture(preResult));
 
-        // Post-verify returns mismatch - both initial and retry will get same result
         VerificationResult failResult = VerificationResult.mismatch(
             VerificationResult.VerificationType.DANE, "actual", "expected");
         when(mockVerifier.postVerify(anyString(), any(), any()))
@@ -747,37 +678,32 @@ class AnsHttpClientTest {
             .delegate(mockHttpClient)
             .connectionVerifier(mockVerifier)
             .verificationPolicy(VerificationPolicy.DANE_REQUIRED)
+            .certProvider(mockCertProvider)
             .build();
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create("https://example.com/api"))
             .build();
 
-        // Execute and verify - should throw after retry also fails
         CompletableFuture<HttpResponse<String>> future =
             client.sendAsync(request, HttpResponse.BodyHandlers.ofString());
 
         ExecutionException ex = assertThrows(ExecutionException.class, future::get);
         assertTrue(ex.getCause() instanceof VerificationException);
 
-        // preVerify called twice due to retry on mismatch
-        org.mockito.Mockito.verify(mockVerifier, org.mockito.Mockito.times(2))
-            .preVerify("example.com", 443);
+        verify(mockVerifier, times(2)).preVerify("example.com", 443);
     }
 
     @Test
     @SuppressWarnings("unchecked")
     void sendWithPreVerifyExceptionFallsBackToEmptyResult() throws Exception {
-        // Setup: preVerify throws exception
         when(mockVerifier.preVerify(anyString(), anyInt()))
             .thenReturn(CompletableFuture.failedFuture(new RuntimeException("DNS lookup failed")));
 
-        mockedStatic = mockStatic(CertificateCapturingTrustManager.class);
         X509Certificate mockCert = mock(X509Certificate.class);
         X509Certificate[] certs = new X509Certificate[]{mockCert};
 
-        mockedStatic.when(() -> CertificateCapturingTrustManager.getCapturedCertificates("example.com"))
-            .thenReturn(certs);
+        when(mockCertProvider.getCapturedCertificates("example.com")).thenReturn(certs);
 
         HttpResponse<String> mockResponse = mock(HttpResponse.class);
         when(mockResponse.body()).thenReturn("success after fallback");
@@ -794,13 +720,13 @@ class AnsHttpClientTest {
             .delegate(mockHttpClient)
             .connectionVerifier(mockVerifier)
             .verificationPolicy(VerificationPolicy.PKI_ONLY)
+            .certProvider(mockCertProvider)
             .build();
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create("https://example.com/api"))
             .build();
 
-        // Execute - should succeed despite preVerify failure
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
 
         assertNotNull(response);
@@ -810,10 +736,7 @@ class AnsHttpClientTest {
     @Test
     @SuppressWarnings("unchecked")
     void sendAsyncWithNoCapturedCertsAndPkiOnlyShouldSucceed() throws Exception {
-        // When PKI_ONLY policy and no certificates captured, should still succeed
-        mockedStatic = mockStatic(CertificateCapturingTrustManager.class);
-        mockedStatic.when(() -> CertificateCapturingTrustManager.getCapturedCertificates("example.com"))
-            .thenReturn(null);
+        when(mockCertProvider.getCapturedCertificates("example.com")).thenReturn(null);
 
         HttpResponse<String> mockResponse = mock(HttpResponse.class);
         when(mockResponse.body()).thenReturn("pki only success");
@@ -828,13 +751,13 @@ class AnsHttpClientTest {
             .delegate(mockHttpClient)
             .connectionVerifier(mockVerifier)
             .verificationPolicy(VerificationPolicy.PKI_ONLY)
+            .certProvider(mockCertProvider)
             .build();
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create("https://example.com/api"))
             .build();
 
-        // Execute - PKI_ONLY doesn't require certificate verification
         HttpResponse<String> response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).get();
 
         assertNotNull(response);
@@ -846,20 +769,16 @@ class AnsHttpClientTest {
     @Test
     @SuppressWarnings("unchecked")
     void sendWithMismatchShouldRetryAndSucceedWithFreshData() throws Exception {
-        // Setup mocks
-        mockedStatic = mockStatic(CertificateCapturingTrustManager.class);
         X509Certificate mockCert = mock(X509Certificate.class);
         X509Certificate[] certs = new X509Certificate[]{mockCert};
 
-        mockedStatic.when(() -> CertificateCapturingTrustManager.getCapturedCertificates("example.com"))
-            .thenReturn(certs);
+        when(mockCertProvider.getCapturedCertificates("example.com")).thenReturn(certs);
 
         HttpResponse<String> mockResponse = mock(HttpResponse.class);
         when(mockResponse.body()).thenReturn("success after retry");
         when(mockHttpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
             .thenReturn(mockResponse);
 
-        // First preVerify returns stale data, second returns fresh data
         PreVerificationResult stalePreResult = PreVerificationResult.builder("example.com", 443)
             .badgeFingerprints(List.of("old-fingerprint"))
             .build();
@@ -870,18 +789,15 @@ class AnsHttpClientTest {
             .thenReturn(CompletableFuture.completedFuture(stalePreResult))
             .thenReturn(CompletableFuture.completedFuture(freshPreResult));
 
-        // First postVerify returns mismatch (stale data), second returns success (fresh data)
         VerificationResult mismatchResult = VerificationResult.mismatch(
             VerificationResult.VerificationType.BADGE, "actual-fp", "old-fingerprint");
         VerificationResult successResult = VerificationResult.success(
             VerificationResult.VerificationType.BADGE, "actual-fp");
 
-        // Use successive returns for postVerify
         when(mockVerifier.postVerify(anyString(), any(), any()))
             .thenReturn(List.of(mismatchResult))
             .thenReturn(List.of(successResult));
 
-        // Use successive returns for combine
         when(mockVerifier.combine(any(), any()))
             .thenReturn(mismatchResult)
             .thenReturn(successResult);
@@ -890,34 +806,27 @@ class AnsHttpClientTest {
             .delegate(mockHttpClient)
             .connectionVerifier(mockVerifier)
             .verificationPolicy(VerificationPolicy.BADGE_REQUIRED)
+            .certProvider(mockCertProvider)
             .build();
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create("https://example.com/api"))
             .build();
 
-        // Execute - should succeed after retry with fresh data
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
 
-        // Verify
         assertNotNull(response);
         assertEquals("success after retry", response.body());
-
-        // preVerify should be called twice (once for stale, once for fresh after mismatch)
-        org.mockito.Mockito.verify(mockVerifier, org.mockito.Mockito.times(2))
-            .preVerify("example.com", 443);
+        verify(mockVerifier, times(2)).preVerify("example.com", 443);
     }
 
     @Test
     @SuppressWarnings("unchecked")
     void sendWithMismatchShouldThrowAfterRetryIfStillMismatch() throws Exception {
-        // Setup mocks
-        mockedStatic = mockStatic(CertificateCapturingTrustManager.class);
         X509Certificate mockCert = mock(X509Certificate.class);
         X509Certificate[] certs = new X509Certificate[]{mockCert};
 
-        mockedStatic.when(() -> CertificateCapturingTrustManager.getCapturedCertificates("example.com"))
-            .thenReturn(certs);
+        when(mockCertProvider.getCapturedCertificates("example.com")).thenReturn(certs);
 
         HttpResponse<String> mockResponse = mock(HttpResponse.class);
         when(mockHttpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
@@ -929,7 +838,6 @@ class AnsHttpClientTest {
         when(mockVerifier.preVerify(anyString(), anyInt()))
             .thenReturn(CompletableFuture.completedFuture(preResult));
 
-        // Both attempts return mismatch - actual cert doesn't match expected
         VerificationResult mismatchResult = VerificationResult.mismatch(
             VerificationResult.VerificationType.BADGE, "actual-fp", "expected-fp");
         when(mockVerifier.postVerify(anyString(), any(), any()))
@@ -941,32 +849,26 @@ class AnsHttpClientTest {
             .delegate(mockHttpClient)
             .connectionVerifier(mockVerifier)
             .verificationPolicy(VerificationPolicy.BADGE_REQUIRED)
+            .certProvider(mockCertProvider)
             .build();
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create("https://example.com/api"))
             .build();
 
-        // Execute and verify - should throw after retry also fails
         VerificationException ex = assertThrows(VerificationException.class, () ->
             client.send(request, HttpResponse.BodyHandlers.ofString()));
         assertTrue(ex.getMessage().contains("mismatch") || ex.getMessage().contains("MISMATCH"));
-
-        // preVerify should be called twice (initial + retry)
-        org.mockito.Mockito.verify(mockVerifier, org.mockito.Mockito.times(2))
-            .preVerify("example.com", 443);
+        verify(mockVerifier, times(2)).preVerify("example.com", 443);
     }
 
     @Test
     @SuppressWarnings("unchecked")
     void sendWithErrorShouldNotRetry() throws Exception {
-        // ERROR status (not MISMATCH) should not trigger retry
-        mockedStatic = mockStatic(CertificateCapturingTrustManager.class);
         X509Certificate mockCert = mock(X509Certificate.class);
         X509Certificate[] certs = new X509Certificate[]{mockCert};
 
-        mockedStatic.when(() -> CertificateCapturingTrustManager.getCapturedCertificates("example.com"))
-            .thenReturn(certs);
+        when(mockCertProvider.getCapturedCertificates("example.com")).thenReturn(certs);
 
         HttpResponse<String> mockResponse = mock(HttpResponse.class);
         when(mockHttpClient.send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
@@ -976,7 +878,6 @@ class AnsHttpClientTest {
         when(mockVerifier.preVerify(anyString(), anyInt()))
             .thenReturn(CompletableFuture.completedFuture(preResult));
 
-        // Return ERROR (not MISMATCH) - should not trigger retry
         VerificationResult errorResult = VerificationResult.error(
             VerificationResult.VerificationType.DANE, "DNS resolution failed");
         when(mockVerifier.postVerify(anyString(), any(), any()))
@@ -988,38 +889,32 @@ class AnsHttpClientTest {
             .delegate(mockHttpClient)
             .connectionVerifier(mockVerifier)
             .verificationPolicy(VerificationPolicy.DANE_REQUIRED)
+            .certProvider(mockCertProvider)
             .build();
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create("https://example.com/api"))
             .build();
 
-        // Execute and verify - should throw immediately without retry
         assertThrows(VerificationException.class, () ->
             client.send(request, HttpResponse.BodyHandlers.ofString()));
 
-        // preVerify should only be called once (no retry for ERROR)
-        org.mockito.Mockito.verify(mockVerifier, org.mockito.Mockito.times(1))
-            .preVerify("example.com", 443);
+        verify(mockVerifier, times(1)).preVerify("example.com", 443);
     }
 
     @Test
     @SuppressWarnings("unchecked")
     void sendAsyncWithMismatchShouldRetryAndSucceedWithFreshData() throws Exception {
-        // Setup mocks
-        mockedStatic = mockStatic(CertificateCapturingTrustManager.class);
         X509Certificate mockCert = mock(X509Certificate.class);
         X509Certificate[] certs = new X509Certificate[]{mockCert};
 
-        mockedStatic.when(() -> CertificateCapturingTrustManager.getCapturedCertificates("example.com"))
-            .thenReturn(certs);
+        when(mockCertProvider.getCapturedCertificates("example.com")).thenReturn(certs);
 
         HttpResponse<String> mockResponse = mock(HttpResponse.class);
         when(mockResponse.body()).thenReturn("async success after retry");
         when(mockHttpClient.sendAsync(any(HttpRequest.class), any(HttpResponse.BodyHandler.class)))
             .thenReturn(CompletableFuture.completedFuture(mockResponse));
 
-        // First preVerify returns stale data, second returns fresh data
         PreVerificationResult stalePreResult = PreVerificationResult.builder("example.com", 443)
             .badgeFingerprints(List.of("old-fingerprint"))
             .build();
@@ -1030,18 +925,15 @@ class AnsHttpClientTest {
             .thenReturn(CompletableFuture.completedFuture(stalePreResult))
             .thenReturn(CompletableFuture.completedFuture(freshPreResult));
 
-        // First postVerify returns mismatch (stale data), second returns success (fresh data)
         VerificationResult mismatchResult = VerificationResult.mismatch(
             VerificationResult.VerificationType.BADGE, "actual-fp", "old-fingerprint");
         VerificationResult successResult = VerificationResult.success(
             VerificationResult.VerificationType.BADGE, "actual-fp");
 
-        // Use successive returns for postVerify
         when(mockVerifier.postVerify(anyString(), any(), any()))
             .thenReturn(List.of(mismatchResult))
             .thenReturn(List.of(successResult));
 
-        // Use successive returns for combine
         when(mockVerifier.combine(any(), any()))
             .thenReturn(mismatchResult)
             .thenReturn(successResult);
@@ -1050,21 +942,17 @@ class AnsHttpClientTest {
             .delegate(mockHttpClient)
             .connectionVerifier(mockVerifier)
             .verificationPolicy(VerificationPolicy.BADGE_REQUIRED)
+            .certProvider(mockCertProvider)
             .build();
 
         HttpRequest request = HttpRequest.newBuilder()
             .uri(URI.create("https://example.com/api"))
             .build();
 
-        // Execute - should succeed after retry with fresh data
         HttpResponse<String> response = client.sendAsync(request, HttpResponse.BodyHandlers.ofString()).get();
 
-        // Verify
         assertNotNull(response);
         assertEquals("async success after retry", response.body());
-
-        // preVerify should be called twice
-        org.mockito.Mockito.verify(mockVerifier, org.mockito.Mockito.times(2))
-            .preVerify("example.com", 443);
+        verify(mockVerifier, times(2)).preVerify("example.com", 443);
     }
 }

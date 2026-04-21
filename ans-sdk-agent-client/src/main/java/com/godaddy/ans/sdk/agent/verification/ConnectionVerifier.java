@@ -2,7 +2,11 @@ package com.godaddy.ans.sdk.agent.verification;
 
 import java.security.cert.X509Certificate;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+
+import com.godaddy.ans.sdk.agent.VerificationPolicy;
+import com.godaddy.ans.sdk.transparency.scitt.ScittPreVerifyResult;
 
 /**
  * Interface for verifying connections outside the TLS handshake.
@@ -87,5 +91,26 @@ public interface ConnectionVerifier {
      * @param policy the verification policy (determines which failures are fatal)
      * @return the combined result
      */
-    VerificationResult combine(List<VerificationResult> results, com.godaddy.ans.sdk.agent.VerificationPolicy policy);
+    VerificationResult combine(List<VerificationResult> results, VerificationPolicy policy);
+
+    /**
+     * Performs SCITT pre-verification using HTTP response headers.
+     *
+     * <p>This should be called after receiving HTTP response headers but before
+     * post-verification. It extracts SCITT artifacts (receipts, status tokens)
+     * from the headers and verifies them.</p>
+     *
+     * <p>The SCITT domain is automatically determined from the TransparencyClient
+     * configured in the ScittVerifierAdapter.</p>
+     *
+     * <p>The default implementation returns {@link ScittPreVerifyResult#notPresent()},
+     * indicating SCITT verification is not configured. Override this method to
+     * enable SCITT verification.</p>
+     *
+     * @param responseHeaders the HTTP response headers
+     * @return future containing the SCITT pre-verification result
+     */
+    default CompletableFuture<ScittPreVerifyResult> scittPreVerify(Map<String, String> responseHeaders) {
+        return CompletableFuture.completedFuture(ScittPreVerifyResult.notPresent());
+    }
 }

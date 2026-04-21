@@ -9,6 +9,7 @@ import java.util.Objects;
  * <ul>
  *   <li><b>DANE</b>: DNS-based Authentication of Named Entities (TLSA records)</li>
  *   <li><b>Badge</b>: ANS transparency log verification (proof of registration)</li>
+ *   <li><b>SCITT</b>: Cryptographic proof via HTTP headers (receipts and status tokens)</li>
  * </ul>
  *
  * <h2>Using Presets</h2>
@@ -19,11 +20,12 @@ import java.util.Objects;
  *     .verificationPolicy(VerificationPolicy.BADGE_REQUIRED)
  *     .build();
  *
- * // Full verification (all methods required)
+ * // SCITT verification with badge fallback
  * ConnectOptions.builder()
- *     .verificationPolicy(VerificationPolicy.FULL)
+ *     .verificationPolicy(VerificationPolicy.SCITT_ENHANCED)
  *     .build();
- * }</pre>
+ *
+ * </pre>
  *
  * <h2>Custom Configuration</h2>
  * <p>For advanced scenarios, use the builder:</p>
@@ -32,18 +34,21 @@ import java.util.Objects;
  *     .verificationPolicy(VerificationPolicy.custom()
  *         .dane(VerificationMode.ADVISORY)    // Try DANE, log on failure
  *         .badge(VerificationMode.REQUIRED)   // Must verify badge
+ *         .scitt(VerificationMode.ADVISORY)   // Try SCITT, fall back to badge
  *         .build())
  *     .build();
  * }</pre>
  *
  * @param daneMode the DANE verification mode
  * @param badgeMode the Badge verification mode
+ * @param scittMode the SCITT verification mode
  * @see VerificationMode
  * @see ConnectOptions.Builder#verificationPolicy(VerificationPolicy)
  */
 public record VerificationPolicy(
     VerificationMode daneMode,
-    VerificationMode badgeMode
+    VerificationMode badgeMode,
+    VerificationMode scittMode
 ) {
     // ==================== Predefined Policies ====================
 
@@ -54,6 +59,7 @@ public record VerificationPolicy(
      * well-known Certificate Authorities. This is the minimum security level.</p>
      */
     public static final VerificationPolicy PKI_ONLY = new VerificationPolicy(
+        VerificationMode.DISABLED,
         VerificationMode.DISABLED,
         VerificationMode.DISABLED
     );
@@ -67,7 +73,8 @@ public record VerificationPolicy(
      */
     public static final VerificationPolicy BADGE_REQUIRED = new VerificationPolicy(
         VerificationMode.DISABLED,
-        VerificationMode.REQUIRED
+        VerificationMode.REQUIRED,
+        VerificationMode.DISABLED
     );
 
     /**
@@ -78,6 +85,7 @@ public record VerificationPolicy(
      */
     public static final VerificationPolicy DANE_ADVISORY = new VerificationPolicy(
         VerificationMode.ADVISORY,
+        VerificationMode.DISABLED,
         VerificationMode.DISABLED
     );
 
@@ -89,6 +97,7 @@ public record VerificationPolicy(
      */
     public static final VerificationPolicy DANE_REQUIRED = new VerificationPolicy(
         VerificationMode.REQUIRED,
+        VerificationMode.DISABLED,
         VerificationMode.DISABLED
     );
 
@@ -101,16 +110,40 @@ public record VerificationPolicy(
      */
     public static final VerificationPolicy DANE_AND_BADGE = new VerificationPolicy(
         VerificationMode.REQUIRED,
-        VerificationMode.REQUIRED
+        VerificationMode.REQUIRED,
+        VerificationMode.DISABLED
     );
 
     /**
-     * All verification methods required.
+     * SCITT verification with badge fallback.
      *
-     * <p>Maximum security: requires both DANE and Badge verification.</p>
+     * <p>Uses SCITT artifacts (receipts and status tokens) delivered via HTTP headers
+     * for verification when available. Falls back to badge verification if SCITT headers
+     * are not present. This is the recommended migration path from badge-based verification.</p>
+     *
+     * <p><b>Behavior:</b></p>
+     * <ul>
+     *   <li>SCITT headers present and valid → SCITT verification used</li>
+     *   <li>SCITT headers present but invalid → Connection rejected</li>
+     *   <li>SCITT headers absent → Badge verification required as fallback</li>
+     * </ul>
      */
-    public static final VerificationPolicy FULL = new VerificationPolicy(
+    public static final VerificationPolicy SCITT_ENHANCED = new VerificationPolicy(
+        VerificationMode.DISABLED,
         VerificationMode.REQUIRED,
+        VerificationMode.FALLBACK_ALLOWED
+    );
+
+    /**
+     * SCITT verification required, no fallback.
+     *
+     * <p><b>Recommended for production.</b> Requires SCITT artifacts for verification
+     * with no badge fallback. This prevents downgrade attacks where an attacker
+     * strips SCITT headers to force badge-based verification.</p>
+     */
+    public static final VerificationPolicy SCITT_REQUIRED = new VerificationPolicy(
+        VerificationMode.DISABLED,
+        VerificationMode.DISABLED,
         VerificationMode.REQUIRED
     );
 
@@ -122,6 +155,7 @@ public record VerificationPolicy(
     public VerificationPolicy {
         Objects.requireNonNull(daneMode, "daneMode cannot be null");
         Objects.requireNonNull(badgeMode, "badgeMode cannot be null");
+        Objects.requireNonNull(scittMode, "scittMode cannot be null");
     }
 
     // ==================== Factory Methods ====================
@@ -144,13 +178,51 @@ public record VerificationPolicy(
      */
     public boolean hasAnyVerification() {
         return daneMode != VerificationMode.DISABLED
-            || badgeMode != VerificationMode.DISABLED;
+            || badgeMode != VerificationMode.DISABLED
+            || scittMode != VerificationMode.DISABLED;
+    }
+
+    /**
+     * Checks if SCITT verification is enabled.
+     *
+     * @return true if SCITT mode is not DISABLED
+     */
+    public boolean hasScittVerification() {
+        return scittMode != VerificationMode.DISABLED;
+    }
+
+    /**
+     * Returns true if this policy allows falling back to badge verification
+     * when SCITT headers are not present.
+     *
+     * <p>Fallback is allowed when SCITT mode is {@link VerificationMode#FALLBACK_ALLOWED}.
+     * This matches {@link #SCITT_ENHANCED} - the migration scenario.</p>
+     *
+     * @return true if badge fallback is allowed when SCITT headers are missing
+     */
+    public boolean allowsScittFallbackToBadge() {
+        return scittMode == VerificationMode.FALLBACK_ALLOWED;
+    }
+
+    /**
+     * Returns true if SCITT verification failure with present headers
+     * should reject the connection (regardless of fallback settings).
+     *
+     * <p>When SCITT headers are present but invalid, we always reject
+     * to prevent garbage header attacks. This is true for both REQUIRED
+     * and ADVISORY modes when headers exist.</p>
+     *
+     * @return true if invalid SCITT headers should cause rejection
+     */
+    public boolean rejectsInvalidScittHeaders() {
+        return scittMode != VerificationMode.DISABLED;
     }
 
     @Override
     public String toString() {
         return "VerificationPolicy{dane=" + daneMode +
-            ", badge=" + badgeMode + "}";
+            ", badge=" + badgeMode +
+            ", scitt=" + scittMode + "}";
     }
 
     // ==================== Builder ====================
@@ -163,6 +235,7 @@ public record VerificationPolicy(
     public static final class Builder {
         private VerificationMode daneMode = VerificationMode.DISABLED;
         private VerificationMode badgeMode = VerificationMode.DISABLED;
+        private VerificationMode scittMode = VerificationMode.DISABLED;
 
         private Builder() {
         }
@@ -198,12 +271,27 @@ public record VerificationPolicy(
         }
 
         /**
+         * Sets the SCITT verification mode.
+         *
+         * <p>SCITT (Supply Chain Integrity, Transparency, and Trust) verification
+         * uses cryptographic receipts and status tokens delivered via HTTP headers.
+         * This eliminates the need for live transparency log queries.</p>
+         *
+         * @param mode the verification mode
+         * @return this builder
+         */
+        public Builder scitt(VerificationMode mode) {
+            this.scittMode = Objects.requireNonNull(mode, "mode cannot be null");
+            return this;
+        }
+
+        /**
          * Builds the verification policy.
          *
          * @return the configured policy
          */
         public VerificationPolicy build() {
-            return new VerificationPolicy(daneMode, badgeMode);
+            return new VerificationPolicy(daneMode, badgeMode, scittMode);
         }
     }
 }

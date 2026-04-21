@@ -1,15 +1,18 @@
 package com.godaddy.ans.sdk.transparency.verification;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.Expiry;
+import com.godaddy.ans.sdk.crypto.CryptoCache;
+import com.godaddy.ans.sdk.transparency.TransparencyClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.security.NoSuchAlgorithmException;
 import java.security.cert.CertificateEncodingException;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.HexFormat;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Predicate;
 
 /**
  * A caching wrapper for {@link BadgeVerificationService} that reduces blocking
@@ -34,7 +37,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * <h2>Usage</h2>
  * <pre>{@code
  * BadgeVerificationService verifier = CachingBadgeVerificationService.builder()
- *     .delegate(BadgeVerificationService.create())
+ *     .delegate(BadgeVerificationService.create(TransparencyClient.createOte()))
  *     .cacheTtl(Duration.ofMinutes(15))
  *     .build();
  *
@@ -53,19 +56,28 @@ public final class CachingBadgeVerificationService implements ServerVerifier {
 
     private static final Duration DEFAULT_CACHE_TTL = Duration.ofMinutes(15);
     private static final Duration DEFAULT_NEGATIVE_CACHE_TTL = Duration.ofMinutes(5);
+    private static final int DEFAULT_MAX_CACHE_SIZE = 10_000;
 
     private final BadgeVerificationService delegate;
-    private final Duration cacheTtl;
-    private final Duration negativeCacheTtl;
-
-    private final ConcurrentHashMap<String, CachedServerResult> serverCache = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, CachedClientResult> clientCache = new ConcurrentHashMap<>();
+    private final Cache<String, ServerVerificationResult> serverCache;
+    private final Cache<String, ClientVerificationResult> clientCache;
 
     private CachingBadgeVerificationService(Builder builder) {
         this.delegate = builder.delegate;
-        this.cacheTtl = builder.cacheTtl != null ? builder.cacheTtl : DEFAULT_CACHE_TTL;
-        this.negativeCacheTtl = builder.negativeCacheTtl != null ? builder.negativeCacheTtl
-                : DEFAULT_NEGATIVE_CACHE_TTL;
+
+        Duration positiveTtl = builder.cacheTtl != null ? builder.cacheTtl : DEFAULT_CACHE_TTL;
+        Duration negativeTtl = builder.negativeCacheTtl != null
+                ? builder.negativeCacheTtl : DEFAULT_NEGATIVE_CACHE_TTL;
+
+        this.serverCache = Caffeine.newBuilder()
+                .maximumSize(DEFAULT_MAX_CACHE_SIZE)
+                .expireAfter(new VariableTtlExpiry<>(positiveTtl, negativeTtl, ServerVerificationResult::isSuccess))
+                .build();
+
+        this.clientCache = Caffeine.newBuilder()
+                .maximumSize(DEFAULT_MAX_CACHE_SIZE)
+                .expireAfter(new VariableTtlExpiry<>(positiveTtl, negativeTtl, ClientVerificationResult::isSuccess))
+                .build();
     }
 
     /**
@@ -74,30 +86,12 @@ public final class CachingBadgeVerificationService implements ServerVerifier {
      * @param hostname the server hostname to verify
      * @return the verification result (may be cached)
      */
+    @Override
     public ServerVerificationResult verifyServer(String hostname) {
-        // Check cache first
-        CachedServerResult cached = serverCache.get(hostname);
-        if (cached != null && !cached.isExpired()) {
-            LOG.debug("Cache hit for server verification: {}", hostname);
-            return cached.result;
-        }
-
-        // Lazy eviction: remove expired entry immediately to free memory
-        if (cached != null) {
-            serverCache.remove(hostname);
-            LOG.debug("Lazily evicted expired server cache entry: {}", hostname);
-        }
-
-        // Cache miss - perform verification
-        LOG.debug("Cache miss for server verification: {}", hostname);
-        ServerVerificationResult result = delegate.verifyServer(hostname);
-
-        // Cache the result
-        Duration ttl = result.isSuccess() ? cacheTtl : negativeCacheTtl;
-        serverCache.put(hostname, new CachedServerResult(result, ttl));
-        LOG.debug("Cached server verification result for {} (ttl={})", hostname, ttl);
-
-        return result;
+        return serverCache.get(hostname, key -> {
+            LOG.debug("Cache miss for server verification: {}", key);
+            return delegate.verifyServer(key);
+        });
     }
 
     /**
@@ -109,36 +103,16 @@ public final class CachingBadgeVerificationService implements ServerVerifier {
      * @return the verification result (may be cached)
      */
     public ClientVerificationResult verifyClient(X509Certificate clientCert) {
-        // Compute fingerprint for cache key
         String fingerprint = computeFingerprint(clientCert);
         if (fingerprint == null) {
             // Can't cache without fingerprint - delegate directly
             return delegate.verifyClient(clientCert);
         }
 
-        // Check cache first
-        CachedClientResult cached = clientCache.get(fingerprint);
-        if (cached != null && !cached.isExpired()) {
-            LOG.debug("Cache hit for client verification: {}", truncateFingerprint(fingerprint));
-            return cached.result;
-        }
-
-        // Lazy eviction: remove expired entry immediately to free memory
-        if (cached != null) {
-            clientCache.remove(fingerprint);
-            LOG.debug("Lazily evicted expired client cache entry: {}", truncateFingerprint(fingerprint));
-        }
-
-        // Cache miss - perform verification
-        LOG.debug("Cache miss for client verification: {}", truncateFingerprint(fingerprint));
-        ClientVerificationResult result = delegate.verifyClient(clientCert);
-
-        // Cache the result
-        Duration ttl = result.isSuccess() ? cacheTtl : negativeCacheTtl;
-        clientCache.put(fingerprint, new CachedClientResult(result, ttl));
-        LOG.debug("Cached client verification result for {} (ttl={})", truncateFingerprint(fingerprint), ttl);
-
-        return result;
+        return clientCache.get(fingerprint, key -> {
+            LOG.debug("Cache miss for client verification: {}", truncateFingerprint(key));
+            return delegate.verifyClient(clientCert);
+        });
     }
 
     // ==================== Cache Management ====================
@@ -149,9 +123,8 @@ public final class CachingBadgeVerificationService implements ServerVerifier {
      * @param hostname the hostname to invalidate
      */
     public void invalidateServer(String hostname) {
-        if (serverCache.remove(hostname) != null) {
-            LOG.debug("Invalidated server cache for: {}", hostname);
-        }
+        serverCache.invalidate(hostname);
+        LOG.debug("Invalidated server cache for: {}", hostname);
     }
 
     /**
@@ -161,7 +134,8 @@ public final class CachingBadgeVerificationService implements ServerVerifier {
      */
     public void invalidateClient(X509Certificate clientCert) {
         String fingerprint = computeFingerprint(clientCert);
-        if (fingerprint != null && clientCache.remove(fingerprint) != null) {
+        if (fingerprint != null) {
+            clientCache.invalidate(fingerprint);
             LOG.debug("Invalidated client cache for: {}", truncateFingerprint(fingerprint));
         }
     }
@@ -170,55 +144,29 @@ public final class CachingBadgeVerificationService implements ServerVerifier {
      * Clears all cached verification results.
      */
     public void clearCache() {
-        int serverCount = serverCache.size();
-        int clientCount = clientCache.size();
-        serverCache.clear();
-        clientCache.clear();
+        long serverCount = serverCache.estimatedSize();
+        long clientCount = clientCache.estimatedSize();
+        serverCache.invalidateAll();
+        clientCache.invalidateAll();
         LOG.debug("Cleared verification cache ({} server, {} client entries)", serverCount, clientCount);
     }
 
     /**
-     * Returns the number of cached server verification results.
-     */
-    public int serverCacheSize() {
-        return serverCache.size();
-    }
-
-    /**
-     * Returns the number of cached client verification results.
-     */
-    public int clientCacheSize() {
-        return clientCache.size();
-    }
-
-    /**
-     * Removes expired entries from both caches.
+     * Returns the estimated number of cached server verification results.
      *
-     * <p>Call this periodically to prevent memory buildup from expired entries.</p>
+     * @return estimated cache size
      */
-    public void evictExpired() {
-        int serverEvicted = 0;
-        int clientEvicted = 0;
+    public long serverCacheSize() {
+        return serverCache.estimatedSize();
+    }
 
-        var serverIt = serverCache.entrySet().iterator();
-        while (serverIt.hasNext()) {
-            if (serverIt.next().getValue().isExpired()) {
-                serverIt.remove();
-                serverEvicted++;
-            }
-        }
-
-        var clientIt = clientCache.entrySet().iterator();
-        while (clientIt.hasNext()) {
-            if (clientIt.next().getValue().isExpired()) {
-                clientIt.remove();
-                clientEvicted++;
-            }
-        }
-
-        if (serverEvicted > 0 || clientEvicted > 0) {
-            LOG.debug("Evicted {} server and {} client expired cache entries", serverEvicted, clientEvicted);
-        }
+    /**
+     * Returns the estimated number of cached client verification results.
+     *
+     * @return estimated cache size
+     */
+    public long clientCacheSize() {
+        return clientCache.estimatedSize();
     }
 
     // ==================== Private Helpers ====================
@@ -226,15 +174,11 @@ public final class CachingBadgeVerificationService implements ServerVerifier {
     private String computeFingerprint(X509Certificate cert) {
         try {
             byte[] encoded = cert.getEncoded();
-            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
-            byte[] hash = digest.digest(encoded);
+            byte[] hash = CryptoCache.sha256(encoded);
             return HexFormat.of().formatHex(hash);
         } catch (CertificateEncodingException e) {
             LOG.warn("Failed to encode certificate for fingerprint: {}", e.getMessage());
             return null;
-        } catch (NoSuchAlgorithmException e) {
-            // SHA-256 is guaranteed to be available in all Java implementations
-            throw new IllegalStateException("SHA-256 algorithm not available", e);
         }
     }
 
@@ -245,33 +189,35 @@ public final class CachingBadgeVerificationService implements ServerVerifier {
         return fingerprint.substring(0, 16) + "...";
     }
 
-    // ==================== Cache Entry Classes ====================
+    // ==================== Caffeine Expiry for Variable TTL ====================
 
-    private static class CachedServerResult {
-        final ServerVerificationResult result;
-        final Instant expiresAt;
+    /**
+     * Custom Caffeine Expiry that applies different TTLs for positive and negative results.
+     */
+    private static class VariableTtlExpiry<V> implements Expiry<String, V> {
+        private final long positiveTtlNanos;
+        private final long negativeTtlNanos;
+        private final Predicate<V> isSuccess;
 
-        CachedServerResult(ServerVerificationResult result, Duration ttl) {
-            this.result = result;
-            this.expiresAt = Instant.now().plus(ttl);
+        VariableTtlExpiry(Duration positiveTtl, Duration negativeTtl, Predicate<V> isSuccess) {
+            this.positiveTtlNanos = positiveTtl.toNanos();
+            this.negativeTtlNanos = negativeTtl.toNanos();
+            this.isSuccess = isSuccess;
         }
 
-        boolean isExpired() {
-            return Instant.now().isAfter(expiresAt);
-        }
-    }
-
-    private static class CachedClientResult {
-        final ClientVerificationResult result;
-        final Instant expiresAt;
-
-        CachedClientResult(ClientVerificationResult result, Duration ttl) {
-            this.result = result;
-            this.expiresAt = Instant.now().plus(ttl);
+        @Override
+        public long expireAfterCreate(String key, V value, long currentTime) {
+            return isSuccess.test(value) ? positiveTtlNanos : negativeTtlNanos;
         }
 
-        boolean isExpired() {
-            return Instant.now().isAfter(expiresAt);
+        @Override
+        public long expireAfterUpdate(String key, V value, long currentTime, long currentDuration) {
+            return expireAfterCreate(key, value, currentTime);
+        }
+
+        @Override
+        public long expireAfterRead(String key, V value, long currentTime, long currentDuration) {
+            return currentDuration; // No change on read
         }
     }
 
@@ -287,13 +233,14 @@ public final class CachingBadgeVerificationService implements ServerVerifier {
     }
 
     /**
-     * Creates a caching service with default configuration.
+     * Creates a caching service wrapping a badge service for the given transparency client.
      *
-     * @return a new caching service wrapping the default verification service
+     * @param transparencyClient the transparency client to use
+     * @return a new caching service
      */
-    public static CachingBadgeVerificationService create() {
+    public static CachingBadgeVerificationService create(TransparencyClient transparencyClient) {
         return builder()
-            .delegate(BadgeVerificationService.create())
+            .delegate(BadgeVerificationService.create(transparencyClient))
             .build();
     }
 
