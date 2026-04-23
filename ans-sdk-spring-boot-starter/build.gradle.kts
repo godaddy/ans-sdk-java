@@ -1,7 +1,7 @@
 val junitVersion: String by project
 val assertjVersion: String by project
 
-val springBootVersion = "3.4.3"
+val springBootVersion = "4.0.6"
 
 dependencies {
     // ANS SDK modules
